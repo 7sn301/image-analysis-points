@@ -1,109 +1,88 @@
 # -*- coding: utf-8 -*-
-"""
-تحليل الصور في نقاط - النسخة 3.5
-(ملخص تنفيذي ديناميكي + أيقونة X + قاموس دلالي)
-"""
-
+"""تحليل الصور في نقاط - النسخة 3.5 (ملخص تنفيذي ديناميكي + أيقونة X)"""
 import streamlit as st
 import pytesseract
+import json
 from PIL import Image
 import numpy as np
 import cv2
 import re
-import json
-from io import BytesIO
 import google.generativeai as genai
+from io import BytesIO
 
-# ─────────────────────────────────────────
-# ✅ قاموس الكلمات الدلالية
-# ─────────────────────────────────────────
+# ========== قاموس الكلمات الدلالية ==========
 SEMANTIC_KEYWORDS = {
     "عام": [
-        "قرارات", "قيادة المرأة", "دخول الملاعب", "الملك", "أوامر ملكية",
-        "الترفيه", "الحفلات", "الكهرباء", "فاتورة", "الضريبة المضافة",
-        "رؤية 2030", "البنزين", "ولي العهد", "محمد بن سلمان", "الملك عبدالله",
-        "حساب المواطن", "الديوان الملكي", "الأمير", "الشعب", "الفساد",
-        "معاصي", "اختلاط", "انحلال", "الراتب", "الإسكان", "الفواتير",
-        "الجبري", "نيوم", "لاين", "هبد", "مبس", "النحل", "شهيد",
-        "الحكومة", "ربعنا", "معزبكم", "عاطل", "البحر الأحمر", "سدايا",
-        "اعتدال", "كروز", "القدية", "الحويطات", "الحويطي", "مسك",
-        "أرامكو", "صندوق الاستثمارات", "تسويات", "إحسان",
-        "الشمسية", "تشجير", "العلا", "كورال بلوم", "شريك",
-        "الدب الداشر", "الذباب الإلكتروني", "وطنجي", "وطنجية",
-        "منشار", "وطنيون", "وطني", "الشبوك", "وطنجيه", "حامد سلمة"
+        "قرارات", "قيادة المرأة", "السعودية", "الولاء", "الانتماء", 
+        "الأمن", "الاستقرار", "التنمية", "الرؤية", "2030"
     ],
     "المتطرفون": [
-        "العودة", "العريفي", "الإخوان", "الإرهاب", "الربيع العربي",
-        "الثورات", "حسم", "المعتقلين", "حنين", "داعش", "مرسي",
-        "سجون", "الحرية", "جمال خاشقجي", "الطريفي", "سفر الحوالي",
-        "اعتصام", "تجمع", "حقوق الإنسان", "مباحث", "القرضاوي",
-        "لادن", "القاعدة", "جبهة النصرة", "معتقلين", "معتقلون",
-        "معتقلات", "لجين الهذلول", "حماس", "طالبان", "الصحوة",
-        "أمن الدولة"
+        "العودة", "العريفي", "السويدان", "الحبيب", "الخلف", "الحجوري", 
+        "الخارج", "الخوارج", "الخارجية", "الخارجون", "الخارجي"
     ],
     "سياسية": [
-        "قطر", "الدوحة", "تميم", "تركيا", "أردوغان", "علماء السلطان",
-        "ترمب", "ترامب", "صفقة القرن", "القضية الفلسطينية",
-        "مصر", "سوريا", "بايدن", "الحوثي", "حوثيين", "اليمن",
-        "صنعاء", "عدن", "مأرب", "سايكوباث"
+        "قطر", "ترمب", "إيران", "تركيا", "أمريكا", "روسيا", "الصين",
+        "فلسطين", "غزة", "الحرب", "السلام", "الاتفاقية", "العقوبات"
     ],
     "الترفيه": [
-        "الرياض", "فعاليات", "فعالية", "تركي آل الشيخ",
-        "بار حلال", "رقص", "أغاني", "العلمانية",
-        "خمر", "خمور", "شراب", "كلوب", "مصارعة",
-        "الحفلات", "معاصي", "اختلاط", "عادات",
-        "ميزانية", "الملاعب", "ملعب", "نيكي", "عبده", "وايت"
+        "الرياض", "فعالية", "موسم", "ترفيه", "سياحة", "الدرعية",
+        "العلا", "الأمم", "كأس", "مباراة", "فريق", "نادي"
     ],
     "التجنيس": [
-        "التجنيس", "جنسية", "الجنسية", "المواطن", "تجنيس",
-        "المجنس", "المجنسين", "المجنسون", "مجنس",
-        "ترحيل الأجانب", "التوطين", "الوظائف", "السعودة", "سعودة"
+        "التجنيس", "السعودة", "الوظائف", "العمالة", "الأجانب",
+        "الجنسية", "الإقامة", "الاستثمار", "الاقتصاد"
     ],
     "تهكم_وسخرية": [
-        "الدب الداشر", "منشار", "هبد", "سايكوباث",
-        "الذباب الإلكتروني", "وطنجي", "وطنجية", "وطنجيون",
-        "ربعنا", "معزبكم", "النحل", "الشبوك",
-        "بار حلال", "😂", "🤣", "😅",
-        "هههه", "يضحك", "مضحك", "تهكم", "ساخر", "سخرية",
-        "مش قادر", "غير قادر"
+        "🤣", "😂", "😆", "😁", "😄", "😅", "🤪", "🙃",
+        "ironically", "sarcastic", "sarcasm", "mocking", "mock",
+        "مضحك", "مهزلة", "سخرية", "ساخر", "استهزاء", "تهكم",
+        "نكتة", "مقلب", "فشل", "فاشل", "كارثة", "مصيبة",
+        "عيب", "عار", "خزي", "فضيحة", "فضائح", "فضيحه", "فضايح",
+        "تزييف", "تزوير", "كذب", "كاذب", "كذاب", "كذب",
+        "مسرحية", "تمثيلية", "ممثل", "تمثيل", "تمثيل",
+        "كوميديا", "كوميدي", "مضحك", "مضحكه", "مضحكة"
     ]
 }
 
-
+# ========== وظائف الكشف عن التصنيفات ==========
 def detect_category(text):
-    found = {}
+    """الكشف عن التصنيفات الدلالية في النص"""
+    if not text:
+        return {}
+    found_categories = {}
     for category, keywords in SEMANTIC_KEYWORDS.items():
-        matches = [kw for kw in keywords if kw in text]
-        if matches:
-            found[category] = matches
-    return found
-
+        found = [kw for kw in keywords if kw in text]
+        if found:
+            found_categories[category] = found
+    return found_categories
 
 def is_sarcastic_text(text):
-    sarcasm_words = SEMANTIC_KEYWORDS["تهكم_وسخرية"]
-    found = [kw for kw in sarcasm_words if kw in text]
-    return len(found) > 0, found
-
+    """الكشف عن التهكم في النص"""
+    if not text:
+        return False, 0, []
+    sarcastic_keywords = SEMANTIC_KEYWORDS.get("تهكم_وسخرية", [])
+    found = [kw for kw in sarcastic_keywords if kw in text]
+    return len(found) > 0, len(found), found
 
 def get_topic_from_text(text):
-    if any(kw in text for kw in ["ولي الأمر", "الحكومة", "الملك", "الأمير", "مبس"]):
-        return "قضية الخروج على ولي الأمر"
-    if any(kw in text for kw in ["الزواج", "يتزوج", "فقير", "المواليد", "التجنيس"]):
-        return "قضايا الزواج والتجنيس والسكان"
-    if any(kw in text for kw in SEMANTIC_KEYWORDS["الترفيه"]):
-        return "قضايا الترفيه والانفتاح الاجتماعي"
-    if any(kw in text for kw in SEMANTIC_KEYWORDS["المتطرفون"]):
-        return "قضايا التطرف والاعتقال"
-    if any(kw in text for kw in SEMANTIC_KEYWORDS["سياسية"]):
-        return "الموقف السياسي"
-    if any(kw in text for kw in SEMANTIC_KEYWORDS["التجنيس"]):
-        return "قضايا التجنيس"
-    return "الموضوع المطروح"
+    """تحديد موضوع التهكم بناءً على كلمات مفتاحية"""
+    if not text:
+        return "غير محدد"
+    # كلمات مفتاحية لمواضيع مختلفة
+    topics = {
+        "الخروج على ولي الأمر": ["الخروج", "ولي الأمر", "الحاكم", "الحكومة", "النظام"],
+        "التجنيس": ["تجنيس", "سعودة", "أجانب", "جنسية"],
+        "السياسة": ["قطر", "ترمب", "إيران", "تركيا", "أمريكا", "فلسطين", "غزة"],
+        "الترفيه": ["ترفيه", "سياحة", "موسم", "فعالية"],
+        "المتطرفون": ["العودة", "العريفي", "الخارج", "الخوارج"]
+    }
+    for topic, keywords in topics.items():
+        for kw in keywords:
+            if kw in text:
+                return topic
+    return "عام"
 
-
-# ─────────────────────────────────────────
-# إعداد الصفحة
-# ─────────────────────────────────────────
+# ========== إعداد الصفحة ==========
 st.set_page_config(
     page_title="تحليل الصور في نقاط",
     page_icon="📸",
@@ -111,592 +90,699 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ─────────────────────────────────────────
-# ✅ تهيئة session_state
-# ─────────────────────────────────────────
-if "api_key" not in st.session_state:
-    try:
-        st.session_state.api_key = st.secrets.get("GEMINI_API_KEY", "")
-    except Exception:
-        st.session_state.api_key = ""
-
-if "analysis_done"    not in st.session_state: st.session_state.analysis_done    = False
-if "results"          not in st.session_state: st.session_state.results          = None
-if "extracted_text"   not in st.session_state: st.session_state.extracted_text   = ""
-if "analysis_method"  not in st.session_state: st.session_state.analysis_method  = ""
-
-# ─────────────────────────────────────────
-# CSS
-# ─────────────────────────────────────────
+# CSS مخصص
 st.markdown("""
 <style>
     .main, .block-container, .stApp {
         direction: rtl !important;
         text-align: right !important;
-        font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
     }
-    .css-1d391kg, [data-testid="stSidebar"] { direction: rtl !important; }
-
     .result-card {
-        background: linear-gradient(135deg, #1e1e2e, #2a2a3e);
+        background: #1e1e2e;
         border-right: 4px solid #4CAF50;
         border-radius: 12px;
-        padding: 15px 20px;
+        padding: 15px;
         margin: 10px 0;
-        direction: rtl;
         color: white;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     .result-card.missing {
         border-right-color: #f44336;
-        background: linear-gradient(135deg, #1e1e2e, #2e1e1e);
     }
     .result-card.summary {
         border-right-color: #2196F3;
-        background: linear-gradient(135deg, #1e2e3e, #2a3a4e);
         min-height: 120px;
     }
+    .result-card.x-account {
+        border-right-color: #1DA1F2;
+    }
     .card-label {
-        font-size: 13px; color: #aaa;
-        margin-bottom: 8px; direction: rtl;
+        font-size: 13px;
+        color: #aaa;
+        margin-bottom: 5px;
     }
     .card-value {
-        font-size: 16px; font-weight: bold;
-        color: #fff; direction: rtl;
-        unicode-bidi: plaintext; line-height: 1.8;
+        font-size: 16px;
+        font-weight: bold;
+        color: white;
     }
-    .summary-text {
-        font-size: 15px; line-height: 2.2;
-        text-align: justify; padding: 5px 10px;
+    .success-banner {
+        background: linear-gradient(135deg, #4CAF50, #45a049);
+        color: white;
+        padding: 20px;
+        border-radius: 15px;
+        margin: 15px 0;
+        direction: rtl;
     }
-    .card-badge {
-        display: inline-block; padding: 2px 10px;
-        border-radius: 20px; font-size: 12px; margin-right: 8px;
+    .error-banner {
+        background: linear-gradient(135deg, #f44336, #d32f2f);
+        color: white;
+        padding: 20px;
+        border-radius: 15px;
+        margin: 15px 0;
+        direction: rtl;
     }
-    .badge-success { background: #4CAF50; color: white; }
-    .badge-missing  { background: #f44336; color: white; }
-
-    /* ✅ أيقونة X مع رابط الحساب */
+    .warning-banner {
+        background: linear-gradient(135deg, #ff9800, #f57c00);
+        color: white;
+        padding: 20px;
+        border-radius: 15px;
+        margin: 15px 0;
+        direction: rtl;
+    }
     .x-link {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        background: #000;
-        color: #fff !important;
-        padding: 4px 12px;
+        gap: 8px;
+        background: #1DA1F2;
+        color: white;
+        padding: 8px 15px;
         border-radius: 20px;
-        font-size: 14px;
+        text-decoration: none;
         font-weight: bold;
-        text-decoration: none !important;
-        margin-top: 6px;
-        direction: ltr;
+        transition: all 0.3s;
     }
-    .x-link:hover { background: #333; }
+    .x-link:hover {
+        background: #0d8ecf;
+        transform: scale(1.05);
+    }
     .x-icon {
-        width: 16px; height: 16px;
-        fill: white; display: inline-block;
+        width: 20px;
+        height: 20px;
+        fill: white;
     }
-
-    .success-banner {
-        background: linear-gradient(135deg, #1a3a1a, #2d5a2d);
-        border: 1px solid #4CAF50; border-radius: 15px;
-        padding: 20px; text-align: center;
-        color: white; margin: 15px 0; direction: rtl;
-    }
-    .error-banner {
-        background: linear-gradient(135deg, #3a1a1a, #5a2d2d);
-        border: 1px solid #f44336; border-radius: 15px;
-        padding: 15px 20px; color: white;
-        margin: 10px 0; direction: rtl;
-    }
-    .warning-banner {
-        background: linear-gradient(135deg, #3a3a1a, #5a5a2d);
-        border: 1px solid #FFC107; border-radius: 15px;
-        padding: 15px 20px; color: white;
-        margin: 10px 0; direction: rtl;
-    }
-    .stButton > button {
-        width: 100%;
-        background: linear-gradient(135deg, #4CAF50, #45a049);
-        color: white; border: none; border-radius: 10px;
-        padding: 12px; font-size: 16px; font-weight: bold;
-    }
-    .stButton > button:hover { background: linear-gradient(135deg, #45a049, #3d8b40); }
-    .image-info {
-        background: #1e1e2e; border-radius: 10px;
-        padding: 10px 15px; color: #ccc;
-        font-size: 13px; direction: rtl; margin-top: 10px;
-    }
-    .key-valid   { color: #4CAF50; font-size: 13px; }
-    .key-invalid { color: #f44336; font-size: 13px; }
     .category-tag {
-        display: inline-block; background: #2196F3;
-        color: white; padding: 2px 8px;
-        border-radius: 10px; font-size: 11px; margin: 2px;
+        display: inline-block;
+        background: #333;
+        color: #fff;
+        padding: 4px 12px;
+        border-radius: 15px;
+        margin: 2px;
+        font-size: 12px;
+    }
+    .category-tag.sarcastic {
+        background: #ff9800;
+    }
+    .category-tag.political {
+        background: #2196F3;
+    }
+    .category-tag.general {
+        background: #4CAF50;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────
-# ✅ أيقونة X SVG
-# ─────────────────────────────────────────
-X_ICON_SVG = """<svg class="x-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-<path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-</svg>"""
+# ========== Session State ==========
+if "api_key" not in st.session_state:
+    st.session_state.api_key = st.secrets.get("GEMINI_API_KEY", "")
+if "analysis_done" not in st.session_state:
+    st.session_state.analysis_done = False
+if "results" not in st.session_state:
+    st.session_state.results = None
+if "extracted_text" not in st.session_state:
+    st.session_state.extracted_text = ""
+if "analysis_method" not in st.session_state:
+    st.session_state.analysis_method = ""
 
-
+# ========== وظيفة إنشاء رابط X ==========
 def make_x_link(username):
-    """✅ إنشاء رابط X مع الأيقونة"""
+    """إنشاء رابط X (تويتر) مع أيقونة"""
     if not username or username == "غير مُحدد":
-        return ""
-    clean = username.replace("@", "").strip()
-    url   = f"https://x.com/{clean}"
-    return (
-        f'<a href="{url}" target="_blank" class="x-link">'
-        f'{X_ICON_SVG} {username}'
-        f'</a>'
-    )
+        return "غير مُحدد"
+    
+    # إزالة @ إذا كان موجوداً
+    clean_username = username.replace("@", "").strip()
+    
+    # SVG أيقونة X (تويتر)
+    x_icon = '''
+    <svg class="x-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+    </svg>
+    '''
+    
+    return f'''
+    <a href="https://x.com/{clean_username}" target="_blank" class="x-link">
+        {x_icon}
+        @{clean_username}
+    </a>
+    '''
 
-
-# ─────────────────────────────────────────
-# دوال المعالجة
-# ─────────────────────────────────────────
-
-def validate_api_key(api_key):
-    api_key = api_key.strip() if api_key else ""
-    if not api_key:              return False, "⚠️ المفتاح فارغ"
-    if not api_key.startswith("AIza"): return False, "⚠️ يجب أن يبدأ بـ AIza..."
-    if len(api_key) < 30:        return False, "⚠️ المفتاح قصير جداً"
+# ========== الوظائف المساعدة ==========
+def validate_api_key(key):
+    """التحقق من صحة مفتاح API"""
+    key = key.strip()
+    if not key:
+        return False, "⚠️ المفتاح فارغ"
+    if not key.startswith("AIza"):
+        return False, "⚠️ المفتاح يجب أن يبدأ بـ AIza..."
+    if len(key) < 30:
+        return False, "⚠️ المفتاح قصير جداً (يجب أن يكون 30 حرف على الأقل)"
     return True, "✅ صيغة المفتاح صحيحة"
 
-
 def preprocess_image_ocr(image):
+    """معالجة الصورة لتحسين OCR"""
     try:
-        img    = np.array(image.convert('RGB'))
-        gray   = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        gray   = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-        gray   = cv2.bilateralFilter(gray, 9, 75, 75)
-        _, thr = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        kernel = np.array([[-1,-1,-1],[-1,9,-1],[-1,-1,-1]])
-        return Image.fromarray(cv2.filter2D(thr, -1, kernel))
-    except Exception:
+        img = np.array(image.convert('RGB'))
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        gray = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+        gray = cv2.bilateralFilter(gray, 9, 75, 75)
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+        sharpened = cv2.filter2D(thresh, -1, kernel)
+        return Image.fromarray(sharpened)
+    except:
         return image
 
-
 def extract_text_ocr(image):
+    """استخراج النص من الصورة باستخدام OCR"""
     try:
-        img_arr = np.array(image.convert('RGB'))
-        gray    = cv2.cvtColor(img_arr, cv2.COLOR_RGB2GRAY)
-        gray    = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-
-        full_text = pytesseract.image_to_string(
-            gray, lang='ara+eng',
+        img_array = np.array(image.convert('RGB'))
+        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+        gray = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+        
+        # استخراج النص العربي
+        text_arabic = pytesseract.image_to_string(
+            gray, 
+            lang='ara+eng',
             config='--oem 3 --psm 6 -c preserve_interword_spaces=1'
         )
-        eng_text     = pytesseract.image_to_string(gray, lang='eng', config='--oem 3 --psm 6')
-        mentions_eng = re.findall(r'@[A-Za-z0-9_]+', eng_text)
-
-        clean = re.sub(r'[^\u0600-\u06FF\s\d@#_.,;:!؟\-\u200c\u200d]', ' ', full_text)
-        clean = re.sub(r'\s+', ' ', clean).strip()
-        return clean, mentions_eng
+        
+        # استخراج النص الإنجليزي للـ mentions
+        text_english = pytesseract.image_to_string(
+            gray,
+            lang='eng',
+            config='--oem 3 --psm 6'
+        )
+        
+        # استخراج الـ mentions
+        mentions = re.findall(r'@[A-Za-z0-9_]+', text_english)
+        
+        # تنظيف النص
+        cleaned_text = re.sub(r'[^\u0600-\u06FF\s\d@#_.,;:!؟\-\u200c\u200d\u064b-\u065f]', ' ', text_arabic)
+        cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+        
+        return cleaned_text, mentions
     except Exception as e:
         return f"خطأ في OCR: {str(e)}", []
 
-
-# ─────────────────────────────────────────
-# ✅ الملخص التنفيذي الديناميكي الكامل
-# ─────────────────────────────────────────
-def generate_executive_summary(results, text):
-    """
-    ✅ النسخة 3.5: ملخص ديناميكي 100% بناءً على محتوى الصورة الفعلي
-    لا توجد كلمات مُشفَّرة — كل شيء يُبنى من الحقول المستخرجة
-    """
-    post_id      = results.get("معرف_المنشور",  "غير مُحدد")
-    comment_id   = results.get("معرف_التعليق",  "غير مُحدد")
-    invited      = results.get("المدعو",         "غير مُحدد")
+def generate_executive_summary(results, extracted_text=""):
+    """توليد الملخص التنفيذي الديناميكي بناءً على البيانات المستخرجة"""
+    # استخراج البيانات مع قيم افتراضية
+    post_id = results.get("معرف_المنشور", "غير مُحدد")
+    comment_id = results.get("معرف_التعليق", "غير مُحدد")
+    invited = results.get("المدعو", "غير مُحدد")
     post_content = results.get("محتوى_المنشور", "غير مُحدد")
-    clip         = results.get("المقطع",         "غير مُحدد")
-    comment_text = results.get("التعليق",        "غير مُحدد")
-    opinion      = results.get("الرأي",          "غير مُحدد")
-
-    # حماية: إذا لم تتوفر المعلومات الأساسية
-    if post_id == "غير مُحدد" and comment_id == "غير مُحدد":
-        return "غير مُحدد - لم يتم استخراج معلومات كافية للملخص التنفيذي"
-
-    # ── كشف التهكم والموضوع ──
-    is_sarcastic, sarcasm_found = is_sarcastic_text(text)
-    topic    = get_topic_from_text(text)
-    detected = detect_category(text)
-
-    post_label    = post_id.replace("@", "")    if post_id    != "غير مُحدد" else ""
-    comment_label = comment_id.replace("@", "") if comment_id != "غير مُحدد" else ""
-    is_quote      = comment_id != "غير مُحدد"
-
-    summary = ""
-
-    # ══════════════════════════════════════════════
-    # الجملة 1: نشر صاحب المعرف ... منشورًا ...
-    # ══════════════════════════════════════════════
-    if post_label:
-        summary += f"نشر صاحب المعرف {post_label} ({post_id})"
-    else:
-        summary += "نشر أحد المستخدمين"
-
-    # تحديد طبيعة المنشور بناءً على محتواه الفعلي
-    if is_sarcastic and is_quote:
-        summary += " منشورًا يتضمن تعليقًا ساخرًا"
-    elif is_quote:
-        summary += " منشورًا"
-    else:
-        summary += " منشورًا"
-
-    # على منشور مقتبس للمدعو ...
-    if is_quote:
-        if invited != "غير مُحدد":
-            summary += f" على منشور مقتبس للمدعو {invited} ({comment_id})"
-        elif comment_label:
-            summary += f" على منشور مقتبس ({comment_id})"
-
-    summary += "،"
-
-    # ══════════════════════════════════════════════
-    # الجملة 2: حيث تضمّن المنشور الأصلي ...
-    # ══════════════════════════════════════════════
-    # ✅ استخدام المحتوى الفعلي المستخرج من الصورة
-    original_content = ""
-    if comment_text not in ["غير مُحدد", "", None]:
-        original_content = comment_text
-    elif post_content not in ["غير مُحدد", "", None]:
-        original_content = post_content
-
-    if original_content:
-        # اقتطاع النص الطويل بشكل ذكي عند آخر نقطة أو فاصلة
-        if len(original_content) > 200:
-            cut = original_content[:200]
-            last_stop = max(cut.rfind('،'), cut.rfind('.'), cut.rfind('!'), cut.rfind('؟'))
-            original_content = cut[:last_stop + 1] if last_stop > 100 else cut + "..."
-        summary += f" حيث تضمّن المنشور الأصلي: \"{original_content}\""
-
-    # ذكر المدعو إن لم يُذكر سابقاً
-    if invited != "غير مُحدد" and invited not in summary:
-        summary += f" في إشارة إلى المدعو {invited}"
-
-    # وصف المقطع إن وُجد
-    has_clip = (
-        clip not in ["غير مُحدد", "لا يوجد", "", None]
-        and any(k in clip for k in ["يوجد", "مرئي", "فيديو", "مقطع", "✅", "صورة"])
-    )
-    if has_clip:
-        summary += f"، مرفقًا {clip}"
-
-    summary += "،"
-
-    # ══════════════════════════════════════════════
-    # الجملة 3: فيما علّق صاحب المعرف ... بأن ...
-    # ══════════════════════════════════════════════
-    if post_label:
-        summary += f" فيما علّق صاحب المعرف {post_label}"
-
-    # ✅ استخدام الرأي الفعلي المستخرج
-    if opinion not in ["غير مُحدد", "", None]:
-        summary += f" بأن {opinion}"
-    elif post_content not in ["غير مُحدد", "", None]:
-        short_content = post_content[:120] + ("..." if len(post_content) > 120 else "")
-        summary += f" معلّقًا: \"{short_content}\""
-
-    summary += "،"
-
-    # ══════════════════════════════════════════════
-    # الجملة 4: الاستنتاج والتهكم
-    # ══════════════════════════════════════════════
+    clip = results.get("المقطع", "غير مُحدد")
+    comment_text = results.get("التعليق", "غير مُحدد")
+    opinion = results.get("الرأي", "غير مُحدد")
+    
+    # الكشف عن التهكم والموضوع
+    is_sarcastic, sarcasm_count, sarcasm_words = is_sarcastic_text(extracted_text + " " + str(comment_text) + " " + str(post_content))
+    topic = get_topic_from_text(extracted_text + " " + str(post_content))
+    
+    # بناء الملخص التنفيذي
+    summary_parts = []
+    
+    # الجزء 1: معلومات النشر
+    if post_id != "غير مُحدد":
+        summary_parts.append(f"نشر صاحب المعرف {post_id}")
+        if post_content != "غير مُحدد":
+            # اختصار المحتوى إذا كان طويلاً
+            content_summary = post_content[:150] + "..." if len(post_content) > 150 else post_content
+            summary_parts.append(f"منشوراً يتضمن {content_summary}")
+    
+    # الجزء 2: المقتبس/المدعو
+    if invited != "غير مُحدد":
+        summary_parts.append(f"مقتبساً من المدعو {invited}")
+    
+    # الجزء 3: المقطع
+    if clip != "غير مُحدد":
+        summary_parts.append(f"مرفقاً مقطع فيديو يظهر فيه {clip}")
+    
+    # الجزء 4: التعليق
+    if comment_id != "غير مُحدد":
+        comment_intro = f"، حيث علّق صاحب المعرف {comment_id}"
+        if comment_text != "غير مُحدد":
+            comment_summary = comment_text[:150] + "..." if len(comment_text) > 150 else comment_text
+            summary_parts.append(f"{comment_intro} بأن {comment_summary}")
+    
+    # الجزء 5: الرأي والتهكم
+    if opinion != "غير مُحدد":
+        summary_parts.append(f"مستنتجاً أن {opinion}")
+    
     if is_sarcastic:
-        # كشف عبارات الاستنتاج من النص الفعلي
-        if any(k in text for k in ["غير قادر", "مش قادر", "ما يقدر", "لا يستطيع"]):
-            summary += " مستنتجًا أن الشخص المعني غير قادر على ذلك أساسًا،"
-        elif any(k in text for k in ["ماعبيتم", "يستبدل", "يستبدلكم", "الأجانب"]):
-            summary += " مستنتجًا أن النتيجة الحتمية هي الاستبدال بالأجانب،"
+        summary_parts.append(f"، في إشارة تنطوي على تهكم بشأن {topic}")
+    
+    # دمج الأجزاء
+    if summary_parts:
+        summary = "".join(summary_parts) + "."
+        return summary
+    
+    return "غير مُحدد - لم يتم استخراج معلومات كافية من الصورة"
 
-        summary += f" في إشارة تنطوي على تهكم بشأن موقفه من {topic}"
-
-        # إضافة التصنيف الدلالي المكتشف
-        cats = [c for c in detected if c != "تهكم_وسخرية"]
-        if cats:
-            cat_labels = {
-                "عام":       "القضايا العامة",
-                "المتطرفون": "قضايا التطرف",
-                "سياسية":    "القضايا السياسية",
-                "الترفيه":   "قضايا الترفيه",
-                "التجنيس":   "قضايا التجنيس"
-            }
-            labels = [cat_labels.get(c, c) for c in cats[:2]]
-            summary += f" (يندرج ضمن: {' و'.join(labels)})"
-    else:
-        # حتى لو لم يكن ساخراً، أضف موضوع النص
-        if topic != "الموضوع المطروح":
-            summary += f" في سياق {topic}"
-
-    summary += "."
-    return summary
-
-
-def analyze_post_smart(text, mentions_eng):
-    """تحليل ذكي للنص المستخرج"""
-    pts = {
-        "معرف_المنشور":    "غير مُحدد",
-        "معرف_التعليق":    "غير مُحدد",
-        "المدعو":           "غير مُحدد",
-        "محتوى_المنشور":   "غير مُحدد",
-        "المقطع":           "غير مُحدد",
-        "التعليق":          "غير مُحدد",
-        "الرأي":            "غير مُحدد",
+def analyze_post_smart(text, mentions):
+    """تحليل ذكي للمنشور مع استخراج جميع الحقول"""
+    results = {
+        "معرف_المنشور": "غير مُحدد",
+        "معرف_التعليق": "غير مُحدد",
+        "المدعو": "غير مُحدد",
+        "محتوى_المنشور": "غير مُحدد",
+        "المقطع": "غير مُحدد",
+        "التعليق": "غير مُحدد",
+        "الرأي": "غير مُحدد",
         "الملخص_التنفيذي": "غير مُحدد"
     }
-
-    if mentions_eng:
-        pts["معرف_المنشور"] = mentions_eng[0]
-        if len(mentions_eng) > 1:
-            pts["معرف_التعليق"] = mentions_eng[1]
-
-    if pts["معرف_المنشور"] == "غير مُحدد":
-        ar = re.findall(r'@[\w\u0600-\u06FF]+', text)
-        if ar:
-            pts["معرف_المنشور"] = ar[0]
-            if len(ar) > 1: pts["معرف_التعليق"] = ar[1]
-
-    lines = [l.strip() for l in text.split('\n') if len(l.strip()) > 3]
-
-    name_patterns = [
-        r'(?:بشيخنا|الشيخ|الأستاذ|الدكتور|الإمام)\s*[:\s]\s*([\u0600-\u06FF][\u0600-\u06FF\s]{2,25})',
-        r'(?:ردّ على|رد على|يرد على|ذكر)\s+([\u0600-\u06FF\s]{3,25})',
+    
+    # استخراج المعرفات
+    if mentions:
+        results["معرف_المنشور"] = mentions[0]
+        if len(mentions) > 1:
+            results["معرف_التعليق"] = mentions[1]
+    
+    # استخراج المدعو
+    invited_patterns = [
+        r'المدعو\s+([@\w\s]+)',
+        r'الشيخ\s+([@\w\s]+)',
+        r'الداعية\s+([@\w\s]+)',
+        r'(@\w+)'
     ]
-    for pat in name_patterns:
-        m = re.search(pat, text)
-        if m:
-            pts["المدعو"] = m.group(1).strip()
+    for pattern in invited_patterns:
+        match = re.search(pattern, text)
+        if match:
+            results["المدعو"] = match.group(1).strip()
             break
-
-    arabic_lines = [l for l in lines if len(re.findall(r'[\u0600-\u06FF]', l)) > 8]
-    if arabic_lines:
-        pts["محتوى_المنشور"] = arabic_lines[0][:200]
-        if len(arabic_lines) >= 2:
-            pts["التعليق"] = '\n'.join(arabic_lines[1:3])
-
-    if any(k in text for k in ["فيديو", "مقطع", "تسجيل", "كليب", "يوتيوب", "تيكتوك", "رابط"]):
-        pts["المقطع"] = "✅ محتوى مرئي موجود"
-
-    opinion_map = {
-        r'تحريم|محرم|حرام|يحرم':           'يتضمن تحريمًا في المنشور',
-        r'موافق|صحيح|صح':                   'موافقة على المحتوى',
-        r'مخالف|خطأ|غلط':                   'مخالفة للمحتوى',
-        r'أرى|رأيي|أعتقد':                  'رأي شخصي',
-        r'يستبدل|استبدال|أجانب|كفاءات':    'نقد سياسة التجنيس والاستبدال',
-        r'فقراء|فقير|يتزوجون|المواليد':     'نقد الأوضاع الاقتصادية وأثرها على الزواج',
-    }
-    for pat, desc in opinion_map.items():
-        if re.search(pat, text):
-            pts["الرأي"] = desc
+    
+    # استخراج المحتوى
+    content_patterns = [
+        r'محتوى[:\s]+([^\n]+)',
+        r'المنشور[:\s]+([^\n]+)',
+        r'يتضمن[:\s]+([^\n]+)'
+    ]
+    for pattern in content_patterns:
+        match = re.search(pattern, text)
+        if match:
+            results["محتوى_المنشور"] = match.group(1).strip()
             break
-
-    detected_cats = detect_category(text)
-    if detected_cats and pts["الرأي"] == "غير مُحدد":
-        cat_names = [c for c in detected_cats if c != "تهكم_وسخرية"]
-        if cat_names:
-            pts["الرأي"] = f"يندرج ضمن: {', '.join(cat_names[:2])}"
-
-    # ✅ توليد الملخص التنفيذي الديناميكي
-    pts["الملخص_التنفيذي"] = generate_executive_summary(pts, text)
-    return pts
-
+    
+    # استخراج المقطع
+    clip_patterns = [
+        r'مقطع[:\s]+([^\n]+)',
+        r'فيديو[:\s]+([^\n]+)',
+        r'يظهر[:\s]+([^\n]+)'
+    ]
+    for pattern in clip_patterns:
+        match = re.search(pattern, text)
+        if match:
+            results["المقطع"] = match.group(1).strip()
+            break
+    
+    # استخراج التعليق
+    comment_patterns = [
+        r'التعليق[:\s]+([^\n]+)',
+        r'علق[:\s]+([^\n]+)',
+        r'حيث[:\s]+([^\n]+)'
+    ]
+    for pattern in comment_patterns:
+        match = re.search(pattern, text)
+        if match:
+            results["التعليق"] = match.group(1).strip()
+            break
+    
+    # استخراج الرأي
+    opinion_patterns = [
+        r'الرأي[:\s]+([^\n]+)',
+        r'رأي[:\s]+([^\n]+)',
+        r'استنتج[:\s]+([^\n]+)',
+        r'حيث[:\s]+([^\n]+)'
+    ]
+    for pattern in opinion_patterns:
+        match = re.search(pattern, text)
+        if match:
+            results["الرأي"] = match.group(1).strip()
+            break
+    
+    # الكشف عن التصنيفات
+    categories = detect_category(text)
+    
+    # توليد الملخص التنفيذي الديناميكي
+    results["الملخص_التنفيذي"] = generate_executive_summary(results, text)
+    
+    return results
 
 def analyze_with_gemini(image, api_key):
+    """تحليل الصورة باستخدام Gemini"""
     try:
-        api_key = api_key.strip()
-        genai.configure(api_key=api_key)
+        genai.configure(api_key=api_key.strip())
         model = genai.GenerativeModel('gemini-1.5-flash')
-
+        
         prompt = """
-أنت محلل متخصص في تحليل لقطات شاشة منشورات تويتر/X باللغة العربية.
-حلل الصورة المرفقة واستخرج المعلومات التالية بدقة عالية:
+        أنت محلل متخصص في تحليل منشورات تويتر/اكس (X). قم بتحليل الصورة المرفقة واستخراج المعلومات التالية بدقة:
 
-1. معرف_المنشور: معرف (@username) صاحب المنشور الأصلي (بالإنجليزي)
-2. معرف_التعليق: معرف (@username) صاحب المنشور المقتبس (بالإنجليزي)
-3. المدعو: اسم الشخص المذكور أو المدعو في النص (بالعربي)
-4. محتوى_المنشور: النص الكامل للمنشور الأصلي (بالعربي)
-5. المقطع: وصف الفيديو أو المقطع أو الصورة المرفقة إن وجدت، أو "لا يوجد"
-6. التعليق: نص المنشور المقتبس (بالعربي)
-7. الرأي: الرأي أو الحكم أو الموقف الظاهر في المنشور الأصلي
+        المطلوب استخراجه (بصيغة JSON فقط):
+        {
+            "معرف_المنشور": "معرف صاحب المنشور الأصلي (مثلاً: @username)",
+            "معرف_التعليق": "معرف صاحب التعليق/المنشور المقتبس إن وجد",
+            "المدعو": "اسم أو معرف الشخص المدعو/المقتبس منه المنشور",
+            "محتوى_المنشور": "نص المنشور الأصلي باختصار",
+            "المقطع": "وصف المقطع المرئي/الفيديو إن وجد",
+            "التعليق": "نص التعليق على المنشور",
+            "الرأي": "الرأي أو التحليل المقدم في المنشور",
+            "الملخص_التنفيذي": "ملخص تنفيذي كامل يتضمن: من نشر المنشور، ما هو المحتوى، من المدعو/المقتبس، ما هو المقطع، ما هو التعليق، ما هو الرأي، وهل يوجد تهكم أو سخرية"
+        }
 
-8. الملخص_التنفيذي:
-اكتب ملخصًا تنفيذيًا مفصّلاً وكاملاً يصف المنشور الموجود في الصورة فعلاً.
-استخدم هذه الصيغة:
-"نشر صاحب المعرف [الاسم] ([المعرف]) منشورًا [يتضمن تعليقًا ساخرًا/نقديًا إن وجد] على منشور مقتبس [لـ اسم/معرف صاحب المنشور المقتبس]، حيث تضمّن المنشور الأصلي: \"[نص المنشور الأصلي]\", فيما علّق صاحب المعرف [الاسم] بأن [موقفه/رأيه الفعلي من المنشور]، [مستنتجًا أن... إن وجد استنتاج]، في إشارة تنطوي على [تهكم/نقد/تعليق] بشأن [الموضوع الفعلي]."
-
-⚠️ قواعد صارمة:
-- اعتمد فقط على ما تراه في الصورة الحالية
-- لا تستخدم أمثلة أو معلومات من خارج الصورة
-- اذكر المعرفات والأسماء والمحتوى الفعلي الموجود في الصورة
-- الحد الأدنى: 60 كلمة
-- أجب بصيغة JSON فقط بدون ```json أو ```
-- استخدم "غير محدد" فقط إذا كانت المعلومة غائبة فعلاً
-"""
+        قواعد مهمة:
+        1. أعد JSON فقط بدون أي نص إضافي
+        2. إذا لم تجد معلومة معينة، اكتب "غير مُحدد"
+        3. الملخص التنفيذي يجب أن يكون جملة واحدة كاملة لا تقل عن 80 كلمة
+        4. تأكد من استخراج جميع المعرفات (@username) بدقة
+        5. حلل المحتوى بعمق لاستخراج أي تهكم أو سخرية
+        
+        مثال على الملخص التنفيذي المطلوب:
+        "نشر صاحب المعرف @username منشوراً يتضمن [محتوى المنشور]، مقتبساً من المدعو [المدعو]، مرفقاً مقطع فيديو يظهر فيه [وصف المقطع]، حيث علّق صاحب المعرف @commenter بأن [التعليق]، مستنتجاً أن [الرأي]، في إشارة تنطوي على تهكم بشأن [الموضوع]."
+        """
+        
         response = model.generate_content([prompt, image])
-        raw = response.text.strip()
-        raw = re.sub(r'^```(json)?\s*', '', raw)
-        raw = re.sub(r'\s*```$', '', raw).strip()
-
-        match = re.search(r'\{[\s\S]*\}', raw)
+        raw_response = response.text
+        
+        # تنظيف الاستجابة
+        cleaned = re.sub(r'^```(json)?\s*', '', raw_response.strip())
+        cleaned = re.sub(r'\s*```$', '', cleaned)
+        
+        # استخراج JSON
+        match = re.search(r'\{[\s\S]*\}', cleaned)
         if match:
             result = json.loads(match.group())
-            return {
-                "معرف_المنشور":    result.get("معرف_المنشور",    "غير مُحدد"),
-                "معرف_التعليق":    result.get("معرف_التعليق",    "غير مُحدد"),
-                "المدعو":           result.get("المدعو",           "غير مُحدد"),
-                "محتوى_المنشور":   result.get("محتوى_المنشور",   "غير مُحدد"),
-                "المقطع":           result.get("المقطع",           "غير مُحدد"),
-                "التعليق":          result.get("التعليق",          "غير مُحدد"),
-                "الرأي":            result.get("الرأي",            "غير مُحدد"),
-                "الملخص_التنفيذي": result.get("الملخص_التنفيذي", "غير مُحدد"),
-            }, None
-        return None, f"لم يُرجع Gemini JSON صالح: {raw[:200]}"
-
+            
+            # التأكد من وجود جميع الحقول
+            required_fields = ["معرف_المنشور", "معرف_التعليق", "المدعو", 
+                             "محتوى_المنشور", "المقطع", "التعليق", "الرأي", "الملخص_التنفيذي"]
+            for field in required_fields:
+                if field not in result:
+                    result[field] = "غير مُحدد"
+            
+            return result, None
+        else:
+            return None, "لم يتم العثور على JSON صالح في الاستجابة"
+            
     except Exception as e:
-        err = str(e)
-        if "API_KEY_INVALID" in err or "api key not valid" in err.lower():
-            return None, "❌ مفتاح API غير صالح - احصل على مفتاح من: https://aistudio.google.com/apikey"
-        elif "PERMISSION_DENIED"  in err: return None, "❌ ليس لديك صلاحية"
-        elif "QUOTA_EXCEEDED"     in err: return None, "❌ تجاوزت الحد اليومي"
-        elif "timeout"   in err.lower(): return None, "❌ انتهت مهلة الاتصال"
-        else: return None, f"❌ خطأ: {err}"
+        error_str = str(e)
+        if "API_KEY_INVALID" in error_str:
+            return None, "❌ مفتاح API غير صالح. تأكد من صحة المفتاح."
+        elif "PERMISSION_DENIED" in error_str:
+            return None, "❌ لا توجد صلاحية للوصول. تأكد من تفعيل API."
+        elif "QUOTA_EXCEEDED" in error_str:
+            return None, "❌ تم تجاوز الحصة اليومية. استخدم OCR أو انتظر الغد."
+        elif "DeadlineExceeded" in error_str or "timeout" in error_str:
+            return None, "⏱️ انتهى الوقت المحدد. حاول مرة أخرى أو استخدم OCR."
+        else:
+            return None, f"❌ خطأ غير متوقع: {error_str}"
 
-
-# ─────────────────────────────────────────
-# إعداد بيانات الحقول
-# ─────────────────────────────────────────
+# ========== إعدادات العرض ==========
 FIELD_CONFIG = {
-    "معرف_المنشور":    {"icon": "🆔", "label": "معرف المنشور",    "is_username": True},
-    "معرف_التعليق":    {"icon": "💬", "label": "معرف التعليق",    "is_username": True},
-    "المدعو":           {"icon": "👤", "label": "المدعو / المذكور", "is_username": False},
-    "محتوى_المنشور":   {"icon": "📝", "label": "محتوى المنشور",   "is_username": False},
-    "المقطع":           {"icon": "🎬", "label": "المقطع / الفيديو","is_username": False},
-    "التعليق":          {"icon": "💭", "label": "التعليق",          "is_username": False},
-    "الرأي":            {"icon": "⚖️", "label": "الرأي / الموقف",  "is_username": False},
-    "الملخص_التنفيذي": {"icon": "📋", "label": "الملخص التنفيذي", "is_username": False},
+    "معرف_المنشور": {"icon": "👤", "label": "معرف المنشور", "is_username": True},
+    "معرف_التعليق": {"icon": "💬", "label": "معرف التعليق", "is_username": True},
+    "المدعو": {"icon": "🎯", "label": "المدعو/المقتبس"},
+    "محتوى_المنشور": {"icon": "📝", "label": "محتوى المنشور"},
+    "المقطع": {"icon": "🎬", "label": "المقطع/الفيديو"},
+    "التعليق": {"icon": "💭", "label": "التعليق"},
+    "الرأي": {"icon": "🧠", "label": "الرأي/التحليل"},
+    "الملخص_التنفيذي": {"icon": "📋", "label": "الملخص التنفيذي", "is_summary": True}
 }
 
-
-def render_result_card(key, value):
-    """✅ عرض بطاقة نتيجة مع أيقونة X للمعرفات"""
-    cfg        = FIELD_CONFIG.get(key, {"icon": "📌", "label": key, "is_username": False})
-    is_missing = value in ["غير مُحدد", "غير محدد", None, ""]
-
-    if key == "الملخص_التنفيذي":
-        card_class  = "result-card summary" if not is_missing else "result-card missing"
-        value_class = "card-value summary-text"
-    else:
-        card_class  = "result-card missing" if is_missing else "result-card"
-        value_class = "card-value"
-
-    badge_class = "badge-missing" if is_missing else "badge-success"
-    badge_text  = "غير مُحدد"    if is_missing else "✓ مُحدد"
-    display_val = "—"             if is_missing else value
-
-    # ✅ أيقونة X للمعرفات
-    x_link_html = ""
-    if cfg.get("is_username") and not is_missing:
-        x_link_html = f'<br>{make_x_link(value)}'
-
-    st.markdown(f"""
-    <div class="{card_class}">
-        <div class="card-label">
-            {cfg['icon']} {cfg['label']}
-            <span class="card-badge {badge_class}">{badge_text}</span>
+def render_result_card(field_key, value):
+    """عرض بطاقة النتيجة مع أيقونة X للمعرفات"""
+    config = FIELD_CONFIG.get(field_key, {"icon": "📄", "label": field_key})
+    
+    is_missing = value in ["غير مُحدد", "", None, "None"]
+    card_class = "missing" if is_missing else "summary" if config.get("is_summary") else ""
+    
+    if config.get("is_username") and not is_missing:
+        # عرض رابط X للمعرفات
+        x_link = make_x_link(value)
+        st.markdown(f"""
+        <div class="result-card x-account {card_class}">
+            <div class="card-label">{config['icon']} {config['label']}</div>
+            <div class="card-value">{x_link}</div>
         </div>
-        <div class="{value_class}">{display_val}{x_link_html}</div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+    else:
+        # عرض عادي
+        display_value = value if not is_missing else "⚠️ غير مُحدد"
+        st.markdown(f"""
+        <div class="result-card {card_class}">
+            <div class="card-label">{config['icon']} {config['label']}</div>
+            <div class="card-value">{display_value}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-
-# ─────────────────────────────────────────
-# الشريط الجانبي
-# ─────────────────────────────────────────
+# ========== الشريط الجانبي ==========
 with st.sidebar:
-    st.markdown("## ⚙️ الإعدادات")
-
-    mode = st.radio(
-        "طريقة التحليل",
+    st.title("⚙️ الإعدادات")
+    
+    # اختيار طريقة التحليل
+    analysis_mode = st.radio(
+        "طريقة التحليل:",
         ["🔤 OCR تقليدي (مجاني)", "🤖 Gemini AI (أدق ✨)"],
         index=1
     )
-
-    if "Gemini" in mode:
-        st.divider()
-        st.markdown("### 🔑 مفتاح Gemini API")
-
-        def on_api_key_change():
-            st.session_state.api_key = st.session_state._api_key_input
-
+    
+    # إعدادات Gemini
+    if "Gemini" in analysis_mode:
+        st.markdown("---")
+        st.subheader("🔐 مفتاح Gemini API")
+        
         new_key = st.text_input(
-            label="أدخل المفتاح هنا",
+            "أدخل مفتاح Gemini API:",
             value=st.session_state.api_key,
             type="password",
-            placeholder="AIzaSy...",
-            key="_api_key_input",
-            on_change=on_api_key_change,
-            help="احصل على مفتاح مجاني من aistudio.google.com"
+            key="_api_key_input"
         )
+        
         if new_key:
             st.session_state.api_key = new_key
-
+        
+        # التحقق من المفتاح
         if st.session_state.api_key:
-            is_valid, msg = validate_api_key(st.session_state.api_key)
-            css_class = "key-valid" if is_valid else "key-invalid"
-            st.markdown(f'<p class="{css_class}">{msg}</p>', unsafe_allow_html=True)
+            is_valid, message = validate_api_key(st.session_state.api_key)
+            color = "green" if is_valid else "red"
+            st.markdown(f"<p style='color: {color};'>{message}</p>", unsafe_allow_html=True)
+            
+            if not is_valid:
+                st.caption("💡 احصل على مفتاح مجاني من: https://aistudio.google.com/apikey")
         else:
-            st.caption("💡 [Google AI Studio](https://aistudio.google.com/apikey)")
-
-    st.divider()
-    all_fields     = list(FIELD_CONFIG.keys())
-    points_to_show = st.multiselect(
-        "اختر النقاط للعرض",
-        options=all_fields,
-        default=all_fields,
-        format_func=lambda x: f"{FIELD_CONFIG[x]['icon']} {FIELD_CONFIG[x]['label']}"
+            st.caption("💡 احصل على مفتاح مجاني من: https://aistudio.google.com/apikey")
+    
+    # إعدادات العرض
+    st.markdown("---")
+    st.subheader("👁️ إعدادات العرض")
+    
+    all_fields = list(FIELD_CONFIG.keys())
+    selected_fields = st.multiselect(
+        "اختر الحقول للعرض:",
+        all_fields,
+        default=all_fields
     )
-
-    st.divider()
-    st.markdown("### 📊 إحصائيات الجلسة")
-    if st.session_state.results:
-        filled = sum(
-            1 for v in st.session_state.results.values()
-            if v not in ["غير مُحدد", "غير محدد", None, ""]
-        )
-        st.metric("الحقول المُحددة", f"{filled} / {len(FIELD_CONFIG)}")
-
-    if st.button("🗑️ مسح النتائج"):
-        st.session_state.analysis_done  = False
-        st.session_state.results        = None
-        st.session_state.extracted_text = ""
-        st.rerun()
-
-    st.divider()
+    
+    # إحصائيات الجلسة
+    st.markdown("---")
+    st.subheader("📊 إحصائيات الجلسة")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("الصور المحللة", "1" if st.session_state.analysis_done else "0")
+    with col2:
+        st.metric("طريقة التحليل", st.session_state.analysis_method if st.session_state.analysis_method else "-")
+    
+    if st.session_state.analysis_done and st.session_state.results:
+        filled = sum(1 for v in st.session_state.results.values() 
+                    if v not in ["غير مُحدد", "", None])
+        total = len(st.session_state.results)
+        st.progress(filled/total)
+        st.caption(f"تم استخراج {filled}/{total} حقول ({int(filled/total*100)}%)")
+    
+    # زر مسح النتائج
+    if st.session_state.analysis_done:
+        if st.button("🗑️ مسح النتائج", use_container_width=True):
+            st.session_state.analysis_done = False
+            st.session_state.results = None
+            st.session_state.extracted_text = ""
+            st.session_state.analysis_method = ""
+            st.rerun()
+    
+    # عرض القاموس الدلالي
     with st.expander("📚 القاموس الدلالي"):
-        for cat, words in SEMANTIC_KEYWORDS.items():
-            if cat != "تهكم_وسخرية":
-                st.markdown(f"**{cat}** ({len(words)} كلمة)")
+        for category, keywords in SEMANTIC_KEYWORDS.items():
+            st.markdown(f"**{category}:** {', '.join(keywords[:5])}...")
 
+# ========== الواجهة الرئيسية ==========
+st.title("📸 تحليل الصور في نقاط")
+st.markdown("---")
 
-# ─────────────────────────────────────────
-# الواجهة الرئيسية
-# ─────────────────────────────────────────
-st.markdown("# 📸 تحليل الصور في نقاط")
-st.markdown("### استخرج معلومات المنشورات من لقطات الشاشة بدقة عالية")
-
+# رفع الصورة
 uploaded_file = st.file_uploader(
-    "اختر صورة لتحليلها",
+    "📤 اختر صورة لتحليلها:",
     type=["png", "jpg", "jpeg", "webp"],
-    help="الحد الأقصى 200 MB"
+    help="الحد الأقصى: 200 ميجابايت"
 )
 
 if uploaded_file:
+    # عرض الصورة
     image = Image.open(uploaded_file)
-    col1, col2 = st.
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.image(image, caption="الصورة المُرفوعة", use_container_width=True)
+        
+        # معلومات الصورة
+        st.caption(f"📐 الأبعاد: {image.size[0]} × {image.size[1]} بكسل | "
+                  f"📦 الحجم: {len(uploaded_file.getvalue())/1024:.1f} كيلوبايت")
+    
+    with col2:
+        # زر التحليل
+        st.markdown("### 🚀 ابدأ التحليل")
+        
+        use_gemini = "Gemini" in analysis_mode and st.session_state.api_key
+        
+        if st.button("🔍 تحليل الصورة الآن", use_container_width=True):
+            # التحقق من المفتاح إذا كان Gemini
+            if "Gemini" in analysis_mode:
+                if not st.session_state.api_key:
+                    st.error("❌ يرجى إدخال مفتاح Gemini API أولاً")
+                    use_gemini = False
+                else:
+                    is_valid, message = validate_api_key(st.session_state.api_key)
+                    if not is_valid:
+                        st.error(message)
+                        use_gemini = False
+            
+            with st.spinner("⏳ جاري تحليل الصورة..."):
+                results = None
+                method_used = ""
+                
+                # محاولة استخدام Gemini
+                if use_gemini:
+                    results, error = analyze_with_gemini(image, st.session_state.api_key)
+                    if error:
+                        st.warning(error)
+                        st.info("🔄 سيتم المحاولة بالطريقة التقليدية (OCR)...")
+                    else:
+                        method_used = "Gemini AI ✨"
+                
+                # الانتقال إلى OCR إذا فشل Gemini أو لم يُستخدم
+                if results is None:
+                    processed_image = preprocess_image_ocr(image)
+                    text, mentions = extract_text_ocr(processed_image)
+                    st.session_state.extracted_text = text
+                    results = analyze_post_smart(text, mentions)
+                    method_used = "OCR تقليدي 🔤"
+                
+                # حفظ النتائج
+                st.session_state.results = results
+                st.session_state.analysis_method = method_used
+                st.session_state.analysis_done = True
+                
+                st.rerun()
+
+# ========== عرض النتائج ==========
+if st.session_state.analysis_done and st.session_state.results:
+    results = st.session_state.results
+    
+    # شريط النجاح
+    filled = sum(1 for v in results.values() if v not in ["غير مُحدد", "", None])
+    total = len(results)
+    percentage = int(filled/total*100)
+    
+    st.markdown(f"""
+    <div class="success-banner">
+        <h3>✅ تم التحليل بنجاح!</h3>
+        <p>طريقة التحليل: <strong>{st.session_state.analysis_method}</strong></p>
+        <p>تم استخراج <strong>{filled}/{total}</strong> حقول ({percentage}%)</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.progress(percentage/100)
+    
+    # عرض التصنيفات المكتشفة
+    if st.session_state.extracted_text:
+        categories = detect_category(st.session_state.extracted_text)
+        if categories:
+            st.markdown("### 🏷️ التصنيفات المكتشفة:")
+            cols = st.columns(len(categories))
+            for idx, (cat, words) in enumerate(categories.items()):
+                with cols[idx]:
+                    st.markdown(f"**{cat}:**")
+                    for word in words[:3]:
+                        st.markdown(f'<span class="category-tag">{word}</span>', 
+                                  unsafe_allow_html=True)
+    
+    st.markdown("---")
+    st.markdown("### 📋 النتائج:")
+    
+    # عرض الحقول المحددة
+    for field in selected_fields:
+        if field in results:
+            render_result_card(field, results[field])
+    
+    # أزرار التنزيل
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # تنزيل TXT
+        txt_content = "\n".join([f"{k}: {v}" for k, v in results.items()])
+        st.download_button(
+            "📄 تنزيل النتائج (TXT)",
+            data=txt_content.encode('utf-8'),
+            file_name="analysis_result.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+    
+    with col2:
+        # تنزيل JSON
+        json_content = json.dumps(results, ensure_ascii=False, indent=2)
+        st.download_button(
+            "📋 تنزيل النتائج (JSON)",
+            data=json_content.encode('utf-8'),
+            file_name="analysis_result.json",
+            mime="application/json",
+            use_container_width=True
+        )
+    
+    # عرض النص المستخرج للمراجعة
+    if st.session_state.extracted_text:
+        with st.expander("📝 النص المستخرج من OCR (للمراجعة)"):
+            st.text_area("النص الخام:", value=st.session_state.extracted_text, 
+                        disabled=True, height=150)
+
+# ========== دليل الاستخدام ==========
+with st.expander("📖 دليل الاستخدام"):
+    st.markdown("""
+    ### خطوات التحليل:
+    1️⃣ **اختر طريقة التحليل:**
+       - **OCR تقليدي**: مجاني، يعمل على الجهاز محلياً
+       - **Gemini AI**: أدق، يتطلب مفتاح API (مجاني من Google)
+    
+    2️⃣ **احصل على مفتاح Gemini:**
+       - انتقل إلى: https://aistudio.google.com/apikey
+       - أنشئ مفتاحاً مجانياً
+       - أدخله في الشريط الجانبي
+    
+    3️⃣ **ارفع صورة:**
+       - الصيغ المدعومة: PNG, JPG, JPEG, WEBP
+       - الحد الأقصى: 200 ميجابايت
+    
+    4️⃣ **اضغط "تحليل الصورة الآن":**
+       - سيحاول التطبيق استخدام Gemini أولاً
+       - إذا فشل، ينتقل تلقائياً إلى OCR
+    
+    ### ملاحظات مهمة:
+    - ✅ المعرفات (@username) تظهر كروابط قابلة للنقر تؤدي إلى حساب X
+    - ✅ الملخص التنفيذي يُولد تلقائياً بناءً على البيانات المستخرجة
+    - ✅ يمكنك تنزيل النتائج بصيغة TXT أو JSON
+    """)
+
+# ========== التذييل ==========
+st.markdown("---")
+st.caption("© تحليل الصور في نقاط - الإصدار 3.5 | [احصل على مفتاح Gemini المجاني](https://aistudio.google.com/apikey)")
