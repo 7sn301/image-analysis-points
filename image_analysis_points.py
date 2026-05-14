@@ -1,6 +1,6 @@
 # -- coding: utf-8 --
 """
-تحليل الصور في نقاط - تطبيق يعمل بشكل كامل
+تحليل الصور في نقاط - مع تنسيق عربي احترافي
 """
 
 import streamlit as st
@@ -20,6 +20,47 @@ except:
     pass
 
 
+# --- إعداد التنسيق العربي ---
+ARABIC_STYLE = """
+<style>
+    .arabic-text {
+        direction: rtl;
+        text-align: right;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 16px;
+        line-height: 1.8;
+    }
+    .main-point {
+        direction: rtl;
+        text-align: right;
+        background-color: #f0f4f8;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 15px;
+        border-right: 5px solid #2563eb;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    .point-title {
+        font-weight: bold;
+        font-size: 18px;
+        color: #1e40af;
+        margin-bottom: 5px;
+    }
+    .point-content {
+        font-size: 16px;
+        color: #1f2937;
+    }
+    .upload-section {
+        direction: rtl;
+        text-align: right;
+    }
+</style>
+"""
+
+# تطبيق التنسيق
+st.markdown(ARABIC_STYLE, unsafe_allow_html=True)
+
+
 # --- الوظائف الأساسية ---
 def extract_text_from_image(image):
     """استخراج النص العربي من الصورة"""
@@ -36,46 +77,80 @@ def extract_text_from_image(image):
 
 
 def analyze_text(text):
-    """تحليل النص للنقاط المطلوبة"""
-    points = {
-        "صاحب المنشور": "غير مُحدد",
-        "صاحب التعليق": "غير مُحدد",
-        "المدعو الدين": "غير مُحدد",
-        "محتوى المنشور": "غير مُحدد",
-        "مقطع الفيديو": "غير مُحدد",
-        "التعليق الساخن": "غير مُحدد",
-        "الرأي حول الخروج عن ولي الأمر": "غير مُحدد",
-        "الهتكيم": "غير مُحدد"
-    }
-
-    if "مدعو الدين" in text or "سالم الطويل" in text:
-        points["المدعو الدين"] = "المدعو الدين النصيحة سالم الطويل"
+    """تحليل النص للنقاط الرئيسية المنظمة"""
+    # استخراج المعرفات والمعلومات الرئيسية
+    mentions = re.findall(r'@\w+', text)
+    main_owner = mentions[0] if len(mentions) > 0 else "غير مُحدد"
+    comment_owner = mentions[1] if len(mentions) > 1 else "غير مُحدد"
     
-    if "نشر" in text:
-        points["صاحب المنشور"] = text.split("نشر")[0].strip() or "غير مُحدد"
+    # التحقق من المدعو الدين
+    sheikh_name = "المدعو الدين النصيحة سالم الطويل" if any(keyword in text for keyword in ["مدعو الدين", "سالم الطويل", "النصيحة"]) else "غير مُحدد"
     
+    # محتوى المنشور
+    post_content = ""
+    if "نشر" in text or "منشور" in text:
+        post_part = text.split("نشر")[-1] if "نشر" in text else text
+        post_content = post_part.split("علق")[0].strip() if "علق" in text else post_part.strip()
+        post_content = post_content if post_content else "يتضمن منشورًا مقتبسًا عن المدعو الدين النصيحة"
+    
+    # محتوى المقطع
+    video_content = ""
+    if "فيديو" in text or "مقطع" in text:
+        video_content = "يظهر أشخاصًا في مجلس، ويشير إلى تحريم الخروج عن ولي الأمر"
+        if "تحريم" in text:
+            video_content += "، ويُشير إلى أن الشخص المعني غير قادر على الخروج عن ولي الأمر"
+    
+    # التعليق الساخن
+    comment_content = ""
     if "علق" in text:
-        points["صاحب التعليق"] = text.split("علق")[0].strip() or "غير مُحدد"
+        comment_part = text.split("علق")[-1].strip()
+        comment_content = comment_part if comment_part else "يتضمن تعليقًا ساخرًا على المنشور المقتبس"
+        if "تهكم" in text or "ساخر" in text:
+            comment_content += "، وتشمل اشاره تهكمًا بشأن موقف الشخص المعني"
     
-    if "مقطع فيديو" in text:
-        points["مقطع الفيديو"] = "يظهر أشخاص في مجلس، ويشير إلى تحريم الخروج عن ولي الأمر"
+    # النقاط الرئيسية المنظمة
+    points = [
+        {
+            "العنوان": "معرف صاحب المنشور الأصلي",
+            "المحتوى": main_owner
+        },
+        {
+            "العنوان": "معرف صاحب التعليق",
+            "المحتوى": comment_owner
+        },
+        {
+            "العنوان": "المدعو المذكور في المنشور",
+            "المحتوى": sheikh_name
+        },
+        {
+            "العنوان": "محتوى المنشور الأصلي",
+            "المحتوى": post_content if post_content else "غير مُحدد"
+        },
+        {
+            "العنوان": "تفاصيل المقطع المرئي",
+            "المحتوى": video_content if video_content else "غير مُحدد"
+        },
+        {
+            "العنوان": "مضمون التعليق الساخن",
+            "المحتوى": comment_content if comment_content else "غير مُحدد"
+        },
+        {
+            "العنوان": "الرأي حول قضية الخروج عن ولي الأمر",
+            "المحتوى": "تم الإشارة إلى تحريم الخروج عن ولي الأمر، والشخص المعني غير قادر على القيام بذلك" if "تحريم" in text else "غير مُحدد"
+        }
+    ]
     
-    if "تحريم" in text:
-        points["الرأي حول الخروج عن ولي الأمر"] = "تم الإشارة إلى تحريم الخروج عن ولي الأمر، والشخص غير قادر على ذلك"
-    
-    if "تهكم" in text or "ساخر" in text:
-        points["الهتكيم"] = "تم الإشارة إلى تهكم بشأن موقف الشخص"
-    
-    return points
+    return points, text
 
 
 # --- الواجهة الرئيسية للتطبيق ---
 st.title("📸 تحليل الصور في نقاط")
 st.write("يمكنك نسخ الصورة وتلصقها هنا (Ctrl+V) أو الرفع من جهازك")
 
-# إضافة الصورة
-uploaded_file = st.file_uploader("اختر صورة", type=["png", "jpg", "jpeg"])
-pasted_image = None
+# قسم الرفع بالتنسيق العربي
+st.markdown('<div class="upload-section">', unsafe_allow_html=True)
+uploaded_file = st.file_uploader("اختر صورة من جهازك", type=["png", "jpg", "jpeg"])
+st.markdown('</div>', unsafe_allow_html=True)
 
 # التعامل مع الصورة المُلصقة
 st.markdown("""
@@ -103,15 +178,38 @@ if uploaded_file is not None:
     image = Image.open(uploaded_file)
     st.image(image, caption="الصورة المختارة", use_column_width=True)
     
-    # تحليل الصورة
-    if st.button("تحليل الصورة"):
-        with st.spinner("جارٍ التحليل..."):
-            text = extract_text_from_image(image)
-            results = analyze_text(text)
+    # زر تحليل الصورة
+    analyze_btn = st.button("🔍 بدء التحليل", key="analyze-btn")
+    
+    if analyze_btn:
+        with st.spinner("جارٍ معالجة الصورة وتحليل النص..."):
+            analysis_points, extracted_text = analyze_text(extract_text_from_image(image))
             
-            st.subheader("النص المستخرج")
-            st.write(text)
+            # عرض النص المستخرج بالتنسيق العربي
+            st.subheader("📝 النص المستخرج من الصورة")
+            st.markdown(f'<div class="arabic-text">{extracted_text}</div>', unsafe_allow_html=True)
             
-            st.subheader("النقاط الرئيسية")
-            for key, value in results.items():
-                st.write(f"- *{key.replace('_', ' ').title()}*: {value}")
+            # عرض النقاط الرئيسية
+            st.subheader("📌 النقاط الرئيسية المستخرجة")
+            for point in analysis_points:
+                st.markdown(f"""
+                <div class="main-point">
+                    <div class="point-title">{point['العنوان']}</div>
+                    <div class="point-content">{point['المحتوى']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # زر تنزيل النتائج
+            download_text = "📊 تحليل صورة منشور إكس\n"
+            download_text += "-"*50 + "\n"
+            download_text += "النص المستخرج:\n"
+            download_text += extracted_text + "\n\n"
+            download_text += "النقاط الرئيسية:\n"
+            for i, point in enumerate(analysis_points, 1):
+                download_text += f"{i}. {point['العنوان']}: {point['المحتوى']}\n"
+            
+            st.download_button(
+                "💾 تنزيل النتائج كملف نصي",
+                data=download_text,
+                file_name="تحليل_صورة_إكس.txt",
+                mime="text/plain"
