@@ -1,708 +1,958 @@
 # ============================================================
-# المشهد التنفيذي v6.2 — تحليل منشورات X/Twitter
-# إصلاحات: Gemini debug + author @handle + retweet detection
+# المشهد التنفيذي - Executive Scene Analyzer
+# النسخة: v6.3 | تاريخ التحديث: 2026-05
+# الإصلاحات: نماذج Gemini 2025-2026 + Retry Backoff + RTL UI
 # ============================================================
 
-import os, re, json, tempfile, subprocess, requests, traceback
-from typing import Dict, Any, Optional, List
-from urllib.parse import urljoin
+import os
+import re
+import io
+import json
+import time
+import random
+import base64
+import tempfile
+import subprocess
+import shutil
+import requests
 import streamlit as st
-from PIL import Image, ImageOps, ImageEnhance
-import pytesseract
+from pathlib import Path
+from typing import Optional, Tuple, List, Dict
+from urllib.parse import urlparse, urlencode, quote_plus
+
+# ── مكتبات اختيارية ──────────────────────────────────────────
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+try:
+    import pytesseract
+    TESSERACT_AVAILABLE = True
+except ImportError:
+    TESSERACT_AVAILABLE = False
+
+try:
+    import cv2
+    import numpy as np
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
 
 try:
     import google.generativeai as genai
-    GENAI_AVAILABLE = True
+    GEMINI_AVAILABLE = True
 except ImportError:
-    GENAI_AVAILABLE = False
+    GEMINI_AVAILABLE = False
 
 try:
     from bs4 import BeautifulSoup
-    BS_AVAILABLE = True
+    BS4_AVAILABLE = True
 except ImportError:
-    BS_AVAILABLE = False
+    BS4_AVAILABLE = False
 
-# ─────────────────────────────────────────
+# ════════════════════════════════════════════════════════════
+# ⚙️  الإعدادات العامة
+# ════════════════════════════════════════════════════════════
 APP_NAME    = "المشهد التنفيذي"
-APP_VERSION = "6.2"
+APP_VERSION = "6.3"
 APP_EMOJI   = "🎯"
-TESSERACT_LANG = "ara+eng"
-GEMINI_MODELS  = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+
+# ── نماذج Gemini المتاحة 2025-2026 (مرتبة حسب الأولوية) ─────
+# gemini-1.5-flash أفضل للـ Free Tier: 15 RPM, 1500 RPD
+GEMINI_MODELS = [
+    "gemini-1.5-flash",        # ✅ 15 RPM | 1,500 RPD  ← الأفضل مجاناً
+    "gemini-1.5-flash-8b",     # ✅ 15 RPM | 1,500 RPD
+    "gemini-2.5-flash",        # ✅ 10 RPM | 250 RPD
+    "gemini-2.5-flash-lite",   # ✅ احتياطي
+    "gemini-2.5-pro",          # ✅  5 RPM | 100 RPD  ← الأثقل
 ]
 
+OCR_LANG      = "ara+eng"
+REQUEST_DELAY = 2      # ثوانٍ بين كل طلب API
+MAX_RETRIES   = 3      # عدد المحاولات لكل نموذج عند 429
+
+# ── Regex لروابط X / Twitter ─────────────────────────────────
 TWEET_URL_PATTERN = re.compile(
-    r'https?://(?:www\.)?(?:twitter\.com|x\.com)/([^/?#]+)/status/(\d+)',
+    r"https?://(www\.)?(twitter\.com|x\.com)/[^/]+/status/\d+",
     re.IGNORECASE
 )
 
-# ─────────────────── URL helpers ─────────────────────────────
+# ════════════════════════════════════════════════════════════
+# 🔗  دوال التحقق من الروابط
+# ════════════════════════════════════════════════════════════
 def is_tweet_url(url: str) -> bool:
-    return bool(url and TWEET_URL_PATTERN.search(url.strip()))
+    return bool(TWEET_URL_PATTERN.match(url.strip()))
 
 def extract_tweet_id(url: str) -> Optional[str]:
-    m = TWEET_URL_PATTERN.search(url)
-    return m.group(2) if m else None
-
-def extract_username(url: str) -> Optional[str]:
-    m = TWEET_URL_PATTERN.search(url)
+    m = re.search(r"/status/(\d+)", url)
     return m.group(1) if m else None
 
+def extract_username_from_url(url: str) -> str:
+    """يستخرج @username من رابط المنشور."""
+    m = re.search(r"(?:twitter\.com|x\.com)/([^/]+)/status/", url, re.IGNORECASE)
+    return f"@{m.group(1)}" if m else ""
+
 def normalize_tweet_url(url: str) -> str:
-    tid  = extract_tweet_id(url)
-    user = extract_username(url) or "user"
-    return f"https://twitter.com/{user}/status/{tid}" if tid else url.split("?")[0]
+    """يحوّل x.com → twitter.com ويحذف query params."""
+    url = re.sub(r"\?.*$", "", url.strip())
+    url = re.sub(r"https?://(www\.)?x\.com/", "https://twitter.com/", url)
+    return url
 
-# ─────────────────── oEmbed (المصدر الأول) ──────────────────
-def fetch_via_oembed(tweet_url: str) -> Dict[str, Any]:
+# ════════════════════════════════════════════════════════════
+# 🔄  Exponential Backoff للتعامل مع 429
+# ════════════════════════════════════════════════════════════
+def exponential_backoff(attempt: int, base: float = 2.0, cap: float = 60.0) -> float:
+    """يحسب وقت الانتظار: 2^attempt ثانية + jitter عشوائي."""
+    wait = min(base ** attempt + random.uniform(0, 1), cap)
+    return wait
+
+def call_gemini_with_retry(model_name: str, prompt, status_fn=None) -> Optional[str]:
     """
-    Twitter oEmbed API — مجاني تماماً، بدون مفتاح
-    يُرجع: نص المنشور + اسم صاحب الحساب + @handle
+    يستدعي Gemini مع إعادة المحاولة عند 429.
+    يعيد النص أو None عند الفشل.
     """
-    clean = normalize_tweet_url(tweet_url)
-    url_handle = extract_username(tweet_url) or ""
+    if not GEMINI_AVAILABLE:
+        return None
 
-    for endpoint in [
-        f"https://publish.twitter.com/oembed?url={clean}&lang=ar&omit_script=true",
-        f"https://publish.twitter.com/oembed?url={clean}&omit_script=true",
-    ]:
+    for attempt in range(MAX_RETRIES):
         try:
-            r = requests.get(endpoint, timeout=15,
-                             headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code != 200:
-                continue
-            data = r.json()
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            return response.text
 
-            # ── استخراج النص ──
-            html_raw = data.get("html", "")
-            text = ""
-            if BS_AVAILABLE and html_raw:
-                soup = BeautifulSoup(html_raw, "html.parser")
-                for a in soup.find_all("a", href=True):
-                    if "t.co" in a["href"]:
-                        a.decompose()
-                text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True)).strip()
+        except Exception as e:
+            err_str = str(e).lower()
 
-            # ── اسم الحساب + @handle ──
-            display_name  = data.get("author_name", url_handle)
-            author_page   = data.get("author_url", "")
-            handle_from_url = ""
-            if author_page:
-                hm = re.search(r"twitter\.com/([^/?#]+)", author_page, re.I)
-                if hm:
-                    handle_from_url = "@" + hm.group(1)
-            handle = handle_from_url or ("@" + url_handle if url_handle else "")
+            # ── 429: تجاوز الحصة ─────────────────────────────
+            if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
+                wait_time = exponential_backoff(attempt)
+                if status_fn:
+                    status_fn(f"⏳ {model_name}: حد الطلبات – انتظر {wait_time:.0f}ث (محاولة {attempt+1}/{MAX_RETRIES})")
+                time.sleep(wait_time)
+                continue   # أعد المحاولة
 
-            # ── كشف إعادة النشر ──
-            is_retweet = bool(
-                re.search(r"^RT @", text) or
-                (url_handle and handle and
-                 url_handle.lower() != handle.lstrip("@").lower() and
-                 bool(re.search(r"@" + re.escape(url_handle), text, re.I)))
-            )
+            # ── 404: النموذج غير موجود ───────────────────────
+            elif "404" in err_str or "not found" in err_str or "deprecated" in err_str:
+                if status_fn:
+                    status_fn(f"⚠️ {model_name}: النموذج غير متاح – جربّ التالي")
+                return None   # انتقل للنموذج التالي فوراً
 
-            return {
-                "text": text,
-                "display_name": display_name,
-                "handle": handle,
-                "author_url": author_page,
-                "is_retweet": is_retweet,
-                "rt_by_handle": ("@" + url_handle) if is_retweet else "",
-                "source": "oembed",
-                "raw_html": html_raw,
-            }
-        except Exception:
-            continue
+            # ── خطأ آخر ──────────────────────────────────────
+            else:
+                if status_fn:
+                    status_fn(f"❌ {model_name}: خطأ غير متوقع: {str(e)[:80]}")
+                return None
 
-    return {"error": "فشل oEmbed API"}
+    # فشلت كل المحاولات لهذا النموذج
+    if status_fn:
+        status_fn(f"🚫 {model_name}: استُنفدت {MAX_RETRIES} محاولات")
+    return None
 
-# ─────────────────── Nitter (المصدر الثاني) ─────────────────
-def fetch_via_nitter(tweet_url: str) -> Dict[str, Any]:
-    tweet_id = extract_tweet_id(tweet_url)
-    username = extract_username(tweet_url) or ""
-    if not tweet_id or not username:
-        return {"error": "رابط غير صالح"}
+def gemini_generate(prompt, api_key: str, status_fn=None) -> Tuple[Optional[str], Optional[str]]:
+    """
+    يجرّب كل نماذج Gemini بالترتيب حتى ينجح أحدها.
+    يعيد (النص, اسم_النموذج) أو (None, None).
+    """
+    if not GEMINI_AVAILABLE or not api_key:
+        return None, None
 
-    mirrors = [
-        "https://nitter.poast.org",
-        "https://nitter.privacydev.net",
-        "https://nitter.1d4.us",
-        "https://nitter.net",
-        "https://nitter.cz",
-    ]
-    headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "ar,en;q=0.9"}
+    genai.configure(api_key=api_key)
 
-    for mirror in mirrors:
-        try:
-            r = requests.get(f"{mirror}/{username}/status/{tweet_id}",
-                             headers=headers, timeout=10, allow_redirects=True)
-            if r.status_code != 200 or not BS_AVAILABLE:
-                continue
-            soup = BeautifulSoup(r.text, "html.parser")
-            result: Dict[str, Any] = {
-                "text": "", "display_name": username,
-                "handle": "@" + username,
-                "images": [], "video_url": "", "source": mirror
-            }
-            node = soup.find("div", class_="tweet-content")
-            if node:
-                result["text"] = node.get_text(strip=True)
-            for img in soup.find_all("img"):
-                src = img.get("src", "")
-                if "/pic/" in src or ".jpg" in src or ".png" in src:
-                    fu = urljoin(mirror, src)
-                    if fu not in result["images"]:
-                        result["images"].append(fu)
-            vid = soup.find("video")
-            if vid and vid.get("src"):
-                result["video_url"] = urljoin(mirror, vid["src"])
-            if result["text"]:
-                return result
-        except Exception:
-            continue
-    return {"error": "تعذّر الوصول عبر جميع مرايا Nitter"}
+    for model_name in GEMINI_MODELS:
+        if status_fn:
+            status_fn(f"🤖 جارٍ المحاولة: {model_name}")
 
-# ─────────────────── yt-dlp (الوسائط) ──────────────────────
-def download_media_yt_dlp(tweet_url: str, out: str) -> Dict[str, Any]:
-    clean = normalize_tweet_url(tweet_url)
-    res = {"images": [], "video_path": "", "error": ""}
+        result = call_gemini_with_retry(model_name, prompt, status_fn)
+        if result:
+            return result, model_name
+
+        # تأخير بين النماذج لتجنب 429
+        time.sleep(REQUEST_DELAY)
+
+    return None, None
+
+# ════════════════════════════════════════════════════════════
+# 🐦  جلب بيانات المنشور
+# ════════════════════════════════════════════════════════════
+def fetch_via_oembed(tweet_url: str) -> Dict:
+    """يجلب بيانات المنشور عبر Twitter oEmbed API (مجاني، بدون مفتاح)."""
+    result = {"text": "", "author": "", "username": "", "images": [], "video_url": None, "is_retweet": False}
     try:
-        subprocess.run(
-            ["yt-dlp", "--no-playlist", "--write-thumbnail",
-             "--skip-download", "--output", os.path.join(out, "thumb.%(ext)s"), clean],
-            capture_output=True, text=True, timeout=30)
-        subprocess.run(
-            ["yt-dlp", "--no-playlist", "--format", "best[height<=720]",
-             "--output", os.path.join(out, "video.%(ext)s"), clean],
-            capture_output=True, text=True, timeout=60)
-        for f in os.listdir(out):
-            fp = os.path.join(out, f)
-            if f.startswith("thumb"):
-                res["images"].append(fp)
-            elif f.startswith("video"):
-                res["video_path"] = fp
-    except subprocess.TimeoutExpired:
-        res["error"] = "انتهت المهلة"
+        oembed_url = f"https://publish.twitter.com/oembed?url={quote_plus(tweet_url)}&lang=ar&omit_script=true"
+        resp = requests.get(oembed_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code == 200:
+            data = resp.json()
+            result["author"] = data.get("author_name", "")
+            html_content = data.get("html", "")
+
+            if BS4_AVAILABLE and html_content:
+                soup = BeautifulSoup(html_content, "html.parser")
+                # استخراج النص
+                p_tags = soup.find_all("p")
+                texts = [p.get_text(separator=" ", strip=True) for p in p_tags if p.get_text(strip=True)]
+                result["text"] = " ".join(texts)
+                # استخراج الصور
+                imgs = soup.find_all("img")
+                result["images"] = [img["src"] for img in imgs if img.get("src")]
+
+            # استخراج username من رابط المؤلف
+            author_url = data.get("author_url", "")
+            if author_url:
+                m = re.search(r"twitter\.com/([^/?]+)", author_url, re.IGNORECASE)
+                if m:
+                    result["username"] = f"@{m.group(1)}"
     except Exception as e:
-        res["error"] = str(e)
-    return res
+        result["error"] = str(e)
+    return result
 
-# ─────────────────── الجلب الرئيسي ─────────────────────────
-def fetch_tweet_with_media(url: str, api_key: str,
-                           status_box=None) -> Dict[str, Any]:
-    def log(msg, kind="info"):
-        if not status_box: return
-        getattr(status_box, kind, status_box.info)(msg)
+NITTER_MIRRORS = [
+    "https://nitter.privacydev.net",
+    "https://nitter.poast.org",
+    "https://nitter.catsarch.com",
+    "https://nitter.space",
+]
 
-    if not is_tweet_url(url):
-        return {"error": "❌ الرابط غير صالح"}
+def fetch_via_nitter(tweet_url: str) -> Dict:
+    """يجلب بيانات المنشور عبر مرايا Nitter كبديل احتياطي."""
+    result = {"text": "", "author": "", "username": "", "images": [], "video_url": None, "is_retweet": False, "error": ""}
+    tweet_id = extract_tweet_id(tweet_url)
+    username_from_url = extract_username_from_url(tweet_url).lstrip("@")
 
-    tweet_id  = extract_tweet_id(url)
-    url_user  = extract_username(url) or ""
-    log(f"✅ تم التعرف — ID: {tweet_id} | حساب الرابط: @{url_user}")
+    for mirror in NITTER_MIRRORS:
+        try:
+            nitter_url = f"{mirror}/{username_from_url}/status/{tweet_id}"
+            headers = {"User-Agent": "Mozilla/5.0 (compatible; bot/1.0)"}
+            resp = requests.get(nitter_url, timeout=8, headers=headers)
+            if resp.status_code != 200:
+                continue
 
-    result: Dict[str, Any] = {
-        "tweet_id": tweet_id,
-        "url": url,
-        "text": "",
-        "display_name": "",
-        "handle": "@" + url_user,
-        "is_retweet": False,
-        "rt_by_handle": "",
-        "images_text": "",
-        "video_transcript": "",
-        "raw_images": [],
-        "error": "",
-    }
+            if not BS4_AVAILABLE:
+                result["error"] = "BeautifulSoup غير متوفر"
+                continue
 
-    # ── oEmbed ──
-    log("🔗 oEmbed API...")
-    oe = fetch_via_oembed(url)
-    if "error" not in oe and oe.get("text"):
-        result.update({
-            "text": oe["text"],
-            "display_name": oe.get("display_name", ""),
-            "handle": oe.get("handle", result["handle"]),
-            "is_retweet": oe.get("is_retweet", False),
-            "rt_by_handle": oe.get("rt_by_handle", ""),
-        })
-        log("✅ oEmbed نجح", "success")
-    else:
-        log(f"⚠️ oEmbed فشل — {oe.get('error','')}، تجربة Nitter...", "warning")
-        ni = fetch_via_nitter(url)
-        if "error" not in ni and ni.get("text"):
-            result.update({
-                "text": ni["text"],
-                "display_name": ni.get("display_name", ""),
-                "handle": ni.get("handle", result["handle"]),
-                "raw_images": ni.get("images", []),
-            })
-            log("✅ Nitter نجح", "success")
-        else:
-            log(f"⚠️ Nitter فشل — {ni.get('error','')}", "warning")
+            soup = BeautifulSoup(resp.text, "html.parser")
 
-    # ── yt-dlp للوسائط ──
-    log("📥 تحميل الوسائط...")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        media = download_media_yt_dlp(url, tmpdir)
-        for ip in media.get("images", []):
-            if os.path.exists(ip):
-                t = extract_text_from_image(ip, api_key)
-                if t:
-                    result["images_text"] += t + "\n"
-        if media.get("video_path") and os.path.exists(media["video_path"]):
-            log("🎬 تفريغ الفيديو...")
-            result["video_transcript"] = transcribe_video(
-                media["video_path"], api_key)
+            # ── النص ─────────────────────────────────────────
+            content_div = soup.find("div", class_="tweet-content")
+            if content_div:
+                result["text"] = content_div.get_text(separator=" ", strip=True)
+
+            # ── المؤلف ───────────────────────────────────────
+            name_el  = soup.find("a", class_="fullname")
+            uname_el = soup.find("a", class_="username")
+            if name_el:
+                result["author"] = name_el.get_text(strip=True)
+            if uname_el:
+                result["username"] = uname_el.get_text(strip=True)
+
+            # ── إعادة نشر؟ ──────────────────────────────────
+            rt_label = soup.find("span", class_="retweet-header")
+            if rt_label:
+                result["is_retweet"] = True
+
+            # ── الصور ────────────────────────────────────────
+            for img in soup.find_all("img", class_="media-image"):
+                src = img.get("src", "")
+                if src:
+                    full_src = f"{mirror}{src}" if src.startswith("/") else src
+                    result["images"].append(full_src)
+
+            # ── الفيديو ──────────────────────────────────────
+            video_el = soup.find("video")
+            if video_el:
+                result["video_url"] = video_el.get("src", "")
+
+            if result["text"] or result["images"]:
+                return result
+
+        except Exception as e:
+            result["error"] = str(e)
+            continue
 
     return result
 
-# ─────────────────── OCR ─────────────────────────────────────
-def preprocess_img(img: Image.Image) -> Image.Image:
-    img = ImageOps.exif_transpose(img).convert("L")
-    return ImageEnhance.Contrast(img).enhance(1.5)
-
-def extract_text_from_image(path: str, api_key: str) -> str:
+def download_media_yt_dlp(tweet_url: str, output_dir: str) -> Dict:
+    """يحاول تحميل الوسائط عبر yt-dlp."""
+    result = {"images": [], "video_path": None, "error": ""}
+    yt_dlp_path = shutil.which("yt-dlp")
+    if not yt_dlp_path:
+        result["error"] = "yt-dlp غير مثبّت"
+        return result
     try:
-        with Image.open(path) as img:
-            t = pytesseract.image_to_string(
-                preprocess_img(img), lang=TESSERACT_LANG, config="--psm 6")
-            if t.strip():
-                return t.strip()
-    except Exception:
-        pass
-    if api_key and GENAI_AVAILABLE:
-        try:
-            genai.configure(api_key=api_key)
-            m = genai.GenerativeModel("gemini-2.0-flash")
-            with open(path, "rb") as f:
-                data = f.read()
-            r = m.generate_content([
-                "استخرج كل النص في هذه الصورة بدقة",
-                {"mime_type": "image/jpeg", "data": data}
-            ])
-            return r.text if hasattr(r, "text") else ""
-        except Exception:
-            pass
-    return ""
+        cmd = [
+            yt_dlp_path,
+            tweet_url,
+            "--no-playlist",
+            "--write-thumbnail",
+            "--skip-download",
+            "-o", os.path.join(output_dir, "%(id)s.%(ext)s"),
+            "--quiet",
+        ]
+        subprocess.run(cmd, timeout=30, capture_output=True, check=False)
 
-def transcribe_video(path: str, api_key: str) -> str:
-    if not api_key or not GENAI_AVAILABLE:
-        return "(يتطلب Gemini API)"
-    try:
-        genai.configure(api_key=api_key)
-        m = genai.GenerativeModel("gemini-2.0-flash")
-        mime = "video/webm" if path.endswith(".webm") else "video/mp4"
-        with open(path, "rb") as f:
-            data = f.read()
-        r = m.generate_content([
-            "فرّغ كل ما يُقال في الفيديو نصاً كاملاً",
-            {"mime_type": mime, "data": data}
-        ])
-        return r.text if hasattr(r, "text") else ""
+        # جمع الملفات المحملة
+        for f in Path(output_dir).glob("*"):
+            ext = f.suffix.lower()
+            if ext in (".jpg", ".jpeg", ".png", ".webp"):
+                result["images"].append(str(f))
+            elif ext in (".mp4", ".webm", ".mkv"):
+                result["video_path"] = str(f)
     except Exception as e:
-        return "خطأ: " + str(e)
+        result["error"] = str(e)
+    return result
 
-# ─────────────────── تحسين العربية ──────────────────────────
-def improve_arabic_text(text: str, api_key: str) -> str:
-    if not text or not api_key or not GENAI_AVAILABLE:
-        return text
-    try:
-        genai.configure(api_key=api_key)
-        m = genai.GenerativeModel("gemini-2.0-flash")
-        r = m.generate_content(
-            "أعد صياغة النص العربي التالي تصحيحاً لغوياً فقط، "
-            "بدون تغيير المعنى وبدون مقدمات.\n\nالنص:\n" + text)
-        return r.text if hasattr(r, "text") else text
-    except Exception:
-        return text
+def fetch_tweet_with_media(url: str, api_key: str, status_fn=None) -> Dict:
+    """
+    الدالة الرئيسية: تجلب المنشور عبر 3 طبقات احتياطية.
+    الطبقة 1: oEmbed API
+    الطبقة 2: Nitter mirrors
+    الطبقة 3: yt-dlp
+    """
+    if status_fn:
+        status_fn("🔍 يتحقق من الرابط...")
 
-# ─────────────────── Gemini Analysis ────────────────────────
-def analyze_with_gemini(tweet_data: Dict, api_key: str,
-                        mode: str = "تحليل شامل") -> Dict[str, Any]:
-    if not api_key:
-        return {
-            "executive_summary": "⚠️ أدخل مفتاح Gemini API في الشريط الجانبي",
-            "_error_detail": "لا يوجد مفتاح API"
-        }
-    if not GENAI_AVAILABLE:
-        return {
-            "executive_summary": "⚠️ مكتبة google-generativeai غير مثبتة",
-            "_error_detail": "مكتبة مفقودة"
-        }
-
-    parts: List[str] = []
-    if tweet_data.get("text"):
-        parts.append("نص المنشور:\n" + tweet_data["text"])
-    if tweet_data.get("images_text"):
-        parts.append("النص المستخرج من الصور:\n" + tweet_data["images_text"])
-    if tweet_data.get("video_transcript"):
-        parts.append("تفريغ الفيديو:\n" + tweet_data["video_transcript"])
-    context = "\n\n".join(parts) or "(لا يوجد محتوى)"
-
-    prompt = (
-        "أنت محلل إعلامي متخصص. حلّل المنشور التالي تحليلاً تنفيذياً "
-        "بالعربية الفصحى الواضحة.\n"
-        "الحساب: " + tweet_data.get("handle", "") + "\n"
-        "وضع التحليل: " + mode + "\n\n"
-        "المحتوى:\n" + context + "\n\n"
-        "قدّم التحليل بالتنسيق التالي:\n"
-        "**الملخص التنفيذي:** [ملخص شامل في فقرة واحدة]\n\n"
-        "**أبرز النقاط:**\n- ...\n- ...\n\n"
-        "**المخاطر أو الإشكالات:**\n- ...\n\n"
-        "**التوصيات:**\n- ...\n\n"
-        "**التوجه العام:** [إيجابي / سلبي / محايد]\n\n"
-        "**الدلالة الإعلامية:** [تحليل موجز]"
-    )
-
-    errors_log: List[str] = []
-
-    for model_name in GEMINI_MODELS:
-        try:
-            genai.configure(api_key=api_key)
-            model  = genai.GenerativeModel(model_name)
-            resp   = model.generate_content(prompt)
-            text   = resp.text if hasattr(resp, "text") else ""
-
-            if not text.strip():
-                errors_log.append(f"{model_name}: استجابة فارغة")
-                continue
-
-            def extract_section(label: str) -> str:
-                pat = r"\*\*" + re.escape(label) + r"\*\*[:\s]*(.*?)(?=\n\*\*|\Z)"
-                m   = re.search(pat, text, re.DOTALL | re.IGNORECASE)
-                return m.group(1).strip() if m else ""
-
-            def extract_list(label: str) -> List[str]:
-                section = extract_section(label)
-                items   = re.findall(r"[-•]\s*(.+)", section)
-                return [i.strip() for i in items if i.strip()] or [section]
-
-            return {
-                "executive_summary": extract_section("الملخص التنفيذي") or text,
-                "key_points":        extract_list("أبرز النقاط"),
-                "risks":             extract_list("المخاطر أو الإشكالات"),
-                "recommendations":   extract_list("التوصيات"),
-                "sentiment":         extract_section("التوجه العام"),
-                "media_meaning":     extract_section("الدلالة الإعلامية"),
-                "model_used":        model_name,
-                "raw_text":          text,
-            }
-
-        except Exception as e:
-            errors_log.append(f"{model_name}: {str(e)}")
-            continue
-
-    error_detail = " | ".join(errors_log) if errors_log else "خطأ غير معروف"
-    return {
-        "executive_summary": (
-            "❌ فشل التحليل بجميع النماذج\n\n"
-            "**السبب التقني:**\n```\n" + error_detail + "\n```\n\n"
-            "**الحلول المقترحة:**\n"
-            "- تحقق من صحة مفتاح Gemini API\n"
-            "- تحقق من حصة الاستخدام على Google AI Studio\n"
-            "- جرّب تغيير المفتاح من: https://aistudio.google.com/apikey"
-        ),
-        "_error_detail": error_detail,
+    tweet_data = {
+        "text": "", "author": "", "username": "", "url_username": "",
+        "images": [], "video_path": None, "video_url": None,
+        "is_retweet": False, "tweet_id": "", "original_url": url,
     }
 
-# ─────────────────── CSS ─────────────────────────────────────
+    tweet_data["url_username"] = extract_username_from_url(url)
+    tweet_data["tweet_id"] = extract_tweet_id(url) or ""
+    normalized = normalize_tweet_url(url)
+
+    # ── الطبقة 1: oEmbed ─────────────────────────────────────
+    if status_fn:
+        status_fn("📡 الطبقة 1: Twitter oEmbed API...")
+    oembed = fetch_via_oembed(normalized)
+    if oembed.get("text"):
+        tweet_data.update(oembed)
+        if status_fn:
+            status_fn("✅ oEmbed: تم جلب النص بنجاح")
+    else:
+        # ── الطبقة 2: Nitter ─────────────────────────────────
+        if status_fn:
+            status_fn("📡 الطبقة 2: Nitter mirrors...")
+        nitter = fetch_via_nitter(normalized)
+        if nitter.get("text") or nitter.get("images"):
+            tweet_data.update(nitter)
+            if status_fn:
+                status_fn("✅ Nitter: تم جلب البيانات")
+        else:
+            if status_fn:
+                status_fn("⚠️ Nitter فشل – جميع المرايا غير متاحة")
+
+    # ── الطبقة 3: yt-dlp للوسائط ─────────────────────────────
+    if not tweet_data["images"] and not tweet_data.get("video_path"):
+        if status_fn:
+            status_fn("📡 الطبقة 3: yt-dlp للوسائط...")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            media = download_media_yt_dlp(normalized, tmp_dir)
+            if media["images"]:
+                tweet_data["images"].extend(media["images"])
+            if media["video_path"]:
+                tweet_data["video_path"] = media["video_path"]
+
+    return tweet_data
+
+# ════════════════════════════════════════════════════════════
+# 🖼️  OCR واستخراج النص من الصور
+# ════════════════════════════════════════════════════════════
+def ocr_image_tesseract(image_path_or_url: str) -> str:
+    """استخراج النص بـ Tesseract OCR."""
+    if not PIL_AVAILABLE or not TESSERACT_AVAILABLE:
+        return ""
+    try:
+        if image_path_or_url.startswith("http"):
+            resp = requests.get(image_path_or_url, timeout=10)
+            img = Image.open(io.BytesIO(resp.content))
+        else:
+            img = Image.open(image_path_or_url)
+        return pytesseract.image_to_string(img, lang=OCR_LANG)
+    except Exception as e:
+        return f"[OCR Error: {e}]"
+
+def ocr_image_gemini(image_path_or_url: str, api_key: str, status_fn=None) -> str:
+    """استخراج النص من الصورة باستخدام Gemini Vision."""
+    if not GEMINI_AVAILABLE or not api_key:
+        return ""
+    try:
+        if image_path_or_url.startswith("http"):
+            resp = requests.get(image_path_or_url, timeout=10)
+            img_data = resp.content
+        else:
+            with open(image_path_or_url, "rb") as f:
+                img_data = f.read()
+
+        img_b64 = base64.b64encode(img_data).decode()
+        prompt = [
+            "استخرج كل النصوص الموجودة في هذه الصورة بدقة. حافظ على الترتيب الأصلي وأعد النص كما هو.",
+            {"mime_type": "image/jpeg", "data": img_b64}
+        ]
+        text, model = gemini_generate(prompt, api_key, status_fn)
+        return text or ""
+    except Exception as e:
+        return f"[Gemini OCR Error: {e}]"
+
+# ════════════════════════════════════════════════════════════
+# 🎬  استخراج النص من الفيديو
+# ════════════════════════════════════════════════════════════
+def transcribe_video_gemini(video_path: str, api_key: str, status_fn=None) -> str:
+    """يحوّل الفيديو إلى نص باستخدام Gemini."""
+    if not GEMINI_AVAILABLE or not api_key or not os.path.exists(video_path):
+        return ""
+    try:
+        with open(video_path, "rb") as f:
+            video_data = f.read()
+        video_b64 = base64.b64encode(video_data).decode()
+
+        # تحديد نوع الملف
+        ext = Path(video_path).suffix.lower()
+        mime_map = {".mp4": "video/mp4", ".webm": "video/webm", ".mkv": "video/x-matroska"}
+        mime_type = mime_map.get(ext, "video/mp4")
+
+        prompt = [
+            "استخرج وفرّغ كل الكلام والنصوص الظاهرة في هذا الفيديو. قدّم النص كاملاً بالعربية.",
+            {"mime_type": mime_type, "data": video_b64}
+        ]
+        text, model = gemini_generate(prompt, api_key, status_fn)
+        return text or ""
+    except Exception as e:
+        return f"[Video Transcription Error: {e}]"
+
+# ════════════════════════════════════════════════════════════
+# ✨  تحسين النص العربي
+# ════════════════════════════════════════════════════════════
+def improve_arabic_text(text: str, api_key: str, status_fn=None) -> str:
+    """يحسّن النص العربي بتصحيح الأخطاء الإملائية والنحوية."""
+    if not text.strip() or not api_key:
+        return text
+    prompt = f"""صحّح هذا النص العربي: أصلح الأخطاء الإملائية، وأضف علامات التشكيل حيث يلزم، وحسّن الصياغة مع الحفاظ على المعنى الأصلي. أعد النص المحسّن فقط بدون شرح.
+
+النص:
+{text}"""
+    result, _ = gemini_generate(prompt, api_key, status_fn)
+    return result or text
+
+# ════════════════════════════════════════════════════════════
+# 📊  التحليل التنفيذي بـ Gemini
+# ════════════════════════════════════════════════════════════
+def build_analysis_prompt(tweet_data: Dict, mode: str) -> str:
+    """يبني prompt التحليل بحسب الوضع المحدد."""
+
+    author_info = tweet_data.get("author", "")
+    username    = tweet_data.get("username", "") or tweet_data.get("url_username", "")
+    is_retweet  = tweet_data.get("is_retweet", False)
+    text        = tweet_data.get("text", "")
+    tweet_id    = tweet_data.get("tweet_id", "")
+
+    author_block = f"صاحب الحساب: {author_info} ({username})" if username else f"صاحب الحساب: {author_info}"
+    if is_retweet:
+        author_block += "\n⚠️ ملاحظة: هذا المنشور إعادة نشر (Retweet)"
+
+    mode_instructions = {
+        "executive": "ركّز على الجوانب الاستراتيجية والقرارات والمخاطر.",
+        "media":     "ركّز على الأسلوب الإعلامي والرسائل التسويقية والجمهور المستهدف.",
+        "security":  "ركّز على المخاطر الأمنية والتحريض والمعلومات المضللة.",
+        "general":   "قدّم تحليلاً شاملاً ومتوازناً.",
+    }
+    focus = mode_instructions.get(mode, mode_instructions["general"])
+
+    prompt = f"""أنت محلل ذكاء اصطناعي متخصص. حلّل المنشور التالي من منصة X وقدّم ملخصاً تنفيذياً احترافياً.
+
+📌 بيانات المنشور:
+{author_block}
+معرّف المنشور: {tweet_id}
+
+📝 محتوى المنشور:
+{text if text else "(لا يوجد نص – قد يكون المحتوى صورة أو فيديو فقط)"}
+
+🎯 تعليمات التحليل: {focus}
+
+أعد النتيجة بصيغة JSON صحيحة تماماً بهذا الهيكل:
+{{
+  "executive_summary": "ملخص تنفيذي في 3-4 جمل",
+  "key_points": ["النقطة الأولى", "النقطة الثانية", "النقطة الثالثة"],
+  "risks": ["الخطر الأول", "الخطر الثاني"],
+  "recommendations": ["التوصية الأولى", "التوصية الثانية"],
+  "sentiment": "إيجابي | سلبي | محايد",
+  "topics": ["الموضوع الأول", "الموضوع الثاني"],
+  "is_retweet_note": "{('هذا إعادة نشر' if is_retweet else '')}"
+}}
+
+مهم: أعد JSON فقط بدون أي نص خارجه."""
+    return prompt
+
+def run_analysis(tweet_data: Dict, api_key: str, mode: str, status_fn=None) -> Dict:
+    """يشغّل التحليل التنفيذي ويعيد النتيجة كـ dict."""
+    default_error = {
+        "executive_summary": "❌ فشل التحليل",
+        "key_points": [], "risks": [], "recommendations": [],
+        "sentiment": "غير محدد", "topics": [], "is_retweet_note": ""
+    }
+
+    if not api_key:
+        default_error["executive_summary"] = "❌ أدخل مفتاح Gemini API من الشريط الجانبي"
+        return default_error
+
+    prompt = build_analysis_prompt(tweet_data, mode)
+
+    if status_fn:
+        status_fn("🧠 جارٍ التحليل بـ Gemini...")
+
+    raw_text, used_model = gemini_generate(prompt, api_key, status_fn)
+
+    if not raw_text:
+        default_error["executive_summary"] = (
+            "❌ فشل التحليل – أسباب محتملة:\n"
+            "• تجاوز حصة الاستخدام المجانية (429) – انتظر دقيقة وأعد المحاولة\n"
+            "• تحقق من صلاحية مفتاح API على https://aistudio.google.com/apikey"
+        )
+        return default_error
+
+    # ── تحليل JSON ───────────────────────────────────────────
+    try:
+        # تنظيف الـ response
+        clean = raw_text.strip()
+        clean = re.sub(r"^```json\s*", "", clean)
+        clean = re.sub(r"^```\s*",    "", clean)
+        clean = re.sub(r"\s*```$",    "", clean)
+        result = json.loads(clean)
+        result["_model_used"] = used_model
+        return result
+    except json.JSONDecodeError:
+        # استخرج JSON من النص إذا كان مدمجاً
+        json_match = re.search(r"\{[\s\S]+\}", raw_text)
+        if json_match:
+            try:
+                result = json.loads(json_match.group())
+                result["_model_used"] = used_model
+                return result
+            except Exception:
+                pass
+        default_error["executive_summary"] = f"⚠️ الاستجابة غير منظمة:\n{raw_text[:300]}"
+        default_error["_model_used"] = used_model
+        return default_error
+
+# ════════════════════════════════════════════════════════════
+# 🎨  CSS – واجهة RTL عربية
+# ════════════════════════════════════════════════════════════
 def inject_css():
     st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap');
-    html, body, [data-testid="stAppViewContainer"] {
-        font-family: 'Tajawal', sans-serif !important;
-        direction: rtl;
-    }
-    .block-container {
-        direction: rtl !important;
-        text-align: right !important;
-        padding-top: 1.5rem !important;
-        max-width: 1100px;
-    }
-    [data-testid="stHeadingWithActionElements"] h1 {
-        text-align: center !important;
-        font-family: 'Tajawal', sans-serif !important;
-        font-weight: 700 !important;
-    }
-    [data-testid="stCaptionContainer"] p { text-align: center !important; }
-    [data-testid="stSidebar"], [data-testid="stSidebar"] * {
-        direction: rtl !important; text-align: right !important;
-        font-family: 'Tajawal', sans-serif !important;
-    }
-    input, textarea, select {
-        direction: rtl !important; text-align: right !important;
-        font-family: 'Tajawal', sans-serif !important;
-    }
-    label { direction: rtl !important; text-align: right !important;
-            font-family: 'Tajawal', sans-serif !important; }
-    .stButton > button {
-        font-family: 'Tajawal', sans-serif !important;
-        font-size: 15px !important; border-radius: 8px !important;
-    }
-    .stTabs [data-baseweb="tab-list"] { direction: rtl !important; }
-    .stTabs [data-baseweb="tab"] { font-family: 'Tajawal', sans-serif !important; }
-    [data-testid="stAlert"] {
-        direction: rtl !important; text-align: right !important;
-        font-family: 'Tajawal', sans-serif !important;
-    }
-    [data-testid="stMetric"], [data-testid="stMetricLabel"] {
-        text-align: center !important; justify-content: center !important;
-    }
-    .result-card {
-        border: 1px solid rgba(99,102,241,.35); border-radius: 12px;
-        padding: 1.2rem 1.4rem; margin-bottom: .8rem;
-        background: rgba(15,15,35,.45); direction: rtl;
-        text-align: right; font-family: 'Tajawal', sans-serif; line-height: 1.8;
-    }
-    .author-card {
-        border: 1px solid rgba(34,197,94,.35); border-radius: 10px;
-        padding: .7rem 1rem; background: rgba(34,197,94,.07);
-        direction: rtl; font-family: 'Tajawal', sans-serif;
-        margin-bottom: 1rem;
-    }
-    .rt-badge {
-        background: rgba(251,191,36,.15); border: 1px solid rgba(251,191,36,.4);
-        border-radius: 6px; padding: .3rem .7rem; font-size: .85rem;
-        color: #fbbf24; font-family: 'Tajawal', sans-serif;
-    }
-    code, pre { direction: ltr !important; text-align: left !important; }
-    </style>
-    """, unsafe_allow_html=True)
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
 
-# ─────────────────── واجهة Streamlit ────────────────────────
+* { font-family: 'Tajawal', 'Arial', sans-serif !important; }
+
+/* ── اتجاه عام RTL ─────────────────────────────────────── */
+html, body, .stApp { direction: rtl; text-align: right; }
+
+/* ── عنوان التطبيق – مُوسَّط ────────────────────────────── */
+.app-title {
+    text-align: center !important;
+    font-size: 2.5rem;
+    font-weight: 900;
+    background: linear-gradient(135deg, #1DA1F2, #0d47a1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    padding: 0.5rem 0;
+    margin-bottom: 0.2rem;
+}
+.app-subtitle {
+    text-align: center !important;
+    color: #666;
+    font-size: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+/* ── الشريط الجانبي ─────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    direction: rtl !important;
+    text-align: right !important;
+}
+[data-testid="stSidebar"] * {
+    text-align: right !important;
+    direction: rtl !important;
+}
+
+/* ── حقول الإدخال ───────────────────────────────────────── */
+input, textarea, .stTextInput input, .stTextArea textarea {
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+/* ── التبويبات ──────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] { justify-content: flex-end; }
+.stTabs [data-baseweb="tab"]      { direction: rtl; }
+
+/* ── بطاقات النتائج ─────────────────────────────────────── */
+.result-card {
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 1.2rem 1.5rem;
+    margin: 0.8rem 0;
+    border-right: 4px solid #1DA1F2;
+    direction: rtl;
+    text-align: right;
+}
+.author-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, #1DA1F2, #0d47a1);
+    color: white;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+}
+.retweet-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #17bf63;
+    color: white;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    margin-right: 8px;
+}
+.model-badge {
+    font-size: 0.75rem;
+    color: #888;
+    background: #eee;
+    padding: 2px 8px;
+    border-radius: 10px;
+    float: left;
+}
+.sentiment-positive { color: #17bf63; font-weight: 700; }
+.sentiment-negative { color: #e0245e; font-weight: 700; }
+.sentiment-neutral  { color: #657786; font-weight: 700; }
+
+/* ── قوائم النقاط ───────────────────────────────────────── */
+.point-item {
+    background: white;
+    border-radius: 8px;
+    padding: 8px 14px;
+    margin: 4px 0;
+    border: 1px solid #e1e8ed;
+    direction: rtl;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ════════════════════════════════════════════════════════════
+# 🖥️  الواجهة الرئيسية
+# ════════════════════════════════════════════════════════════
+def display_analysis_results(analysis: Dict, tweet_data: Dict):
+    """يعرض نتائج التحليل بشكل منسّق."""
+
+    author   = tweet_data.get("author", "")
+    username = tweet_data.get("username", "") or tweet_data.get("url_username", "")
+    is_rt    = tweet_data.get("is_retweet", False)
+    model    = analysis.get("_model_used", "")
+
+    # ── شارة المؤلف ───────────────────────────────────────
+    st.markdown("#### 👤 صاحب الحساب")
+    author_html = f'<span class="author-badge">🐦 {author}'
+    if username:
+        author_html += f' &nbsp;|&nbsp; <span style="opacity:.8">{username}</span>'
+    author_html += "</span>"
+    if is_rt:
+        author_html += ' <span class="retweet-badge">🔁 إعادة نشر</span>'
+    if model:
+        author_html += f' <span class="model-badge">🤖 {model}</span>'
+    st.markdown(author_html, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── الملخص التنفيذي ───────────────────────────────────
+    st.markdown("#### 📋 الملخص التنفيذي")
+    st.markdown(
+        f'<div class="result-card">{analysis.get("executive_summary", "—")}</div>',
+        unsafe_allow_html=True
+    )
+
+    # ── النقاط الرئيسية + المخاطر + التوصيات ──────────────
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("#### 🎯 النقاط الرئيسية")
+        for pt in analysis.get("key_points", []):
+            st.markdown(f'<div class="point-item">• {pt}</div>', unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("#### ⚠️ المخاطر والتوصيات")
+        for r in analysis.get("risks", []):
+            st.markdown(f'<div class="point-item" style="border-color:#e0245e;">🔴 {r}</div>', unsafe_allow_html=True)
+        for rec in analysis.get("recommendations", []):
+            st.markdown(f'<div class="point-item" style="border-color:#17bf63;">✅ {rec}</div>', unsafe_allow_html=True)
+
+    # ── المشاعر + الموضوعات ───────────────────────────────
+    col3, col4 = st.columns(2)
+    sentiment = analysis.get("sentiment", "محايد")
+    sent_class = "sentiment-positive" if "إيجاب" in sentiment else \
+                 "sentiment-negative" if "سلب"  in sentiment else "sentiment-neutral"
+    with col3:
+        st.markdown("#### 💡 المشاعر العامة")
+        st.markdown(f'<p class="{sent_class}" style="font-size:1.4rem">{sentiment}</p>', unsafe_allow_html=True)
+    with col4:
+        st.markdown("#### 🏷️ الموضوعات")
+        for topic in analysis.get("topics", []):
+            st.markdown(f'<span style="background:#e8f5fd;padding:3px 10px;border-radius:12px;margin:3px;display:inline-block">{topic}</span>', unsafe_allow_html=True)
+
 def main():
     st.set_page_config(
-        page_title=APP_NAME + " " + APP_VERSION,
+        page_title=f"{APP_EMOJI} {APP_NAME}",
         page_icon=APP_EMOJI,
         layout="wide",
         initial_sidebar_state="expanded"
     )
     inject_css()
 
-    st.markdown(
-        "<h1 style='text-align:center;font-family:Tajawal,sans-serif;'>"
-        + APP_EMOJI + " " + APP_NAME + "</h1>",
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        "<p style='text-align:center;color:#9ca3af;font-size:.95rem;"
-        "font-family:Tajawal,sans-serif;margin-bottom:1.5rem;'>"
-        "الإصدار " + APP_VERSION + " — تحليل منشورات X/Twitter بالذكاء الاصطناعي"
-        "</p>",
-        unsafe_allow_html=True
-    )
+    # ── عنوان مُوسَّط ──────────────────────────────────────
+    st.markdown(f'<h1 class="app-title">{APP_EMOJI} {APP_NAME}</h1>', unsafe_allow_html=True)
+    st.markdown(f'<p class="app-subtitle">تحليل منشورات X وتويتر بالذكاء الاصطناعي | v{APP_VERSION}</p>', unsafe_allow_html=True)
 
+    # ════════════════════════════════════════════
+    # الشريط الجانبي
+    # ════════════════════════════════════════════
     with st.sidebar:
         st.markdown("### ⚙️ الإعدادات")
-        gemini_key = st.text_input(
+        api_key = st.text_input(
             "🔑 مفتاح Gemini API",
-            value=os.getenv("GEMINI_API_KEY", ""),
             type="password",
-            help="https://aistudio.google.com/apikey"
+            help="احصل على مفتاحك من: https://aistudio.google.com/apikey",
+            placeholder="AIzaSy..."
         )
+
         st.markdown("---")
-        st.markdown("### 📝 إعدادات التحليل")
         analysis_mode = st.selectbox(
-            "وضع التحليل",
-            ["تحليل شامل", "تحليل سريع", "تحليل تفصيلي"]
-        )
-        arabic_improve = st.checkbox("✨ تحسين اللغة العربية", value=True)
-        st.checkbox("🖼️ OCR الصور", value=True)
-        st.checkbox("🎬 تفريغ الفيديو", value=True)
-        st.markdown("---")
-        st.markdown("### 📊 الجلسة")
-        if "cnt" not in st.session_state:
-            st.session_state["cnt"] = 0
-        st.metric("التحليلات", st.session_state["cnt"])
-        st.markdown("---")
-        st.markdown(
-            "<small style='color:#6b7280'>الروابط المدعومة:<br>"
-            "x.com/user/status/ID<br>twitter.com/user/status/ID<br>"
-            "مع أو بدون ?s=20</small>",
-            unsafe_allow_html=True
+            "🎯 وضع التحليل",
+            ["executive", "media", "security", "general"],
+            format_func=lambda x: {
+                "executive": "📊 تنفيذي",
+                "media":     "📣 إعلامي",
+                "security":  "🔒 أمني",
+                "general":   "🌐 عام"
+            }.get(x, x)
         )
 
-    tab1, tab2, tab3 = st.tabs(["🔗 تحليل بالرابط", "🖼️ تحليل صورة", "📚 الدليل"])
+        st.markdown("---")
+        enable_ocr   = st.checkbox("🖼️ تحليل الصور (OCR)", value=True)
+        enable_video = st.checkbox("🎬 تحليل الفيديو",     value=False)
+        improve_text = st.checkbox("✨ تحسين النص العربي", value=False)
 
-    with tab1:
+        st.markdown("---")
+        st.markdown("#### 📊 حدود الاستخدام المجاني")
+        st.info("""
+**gemini-1.5-flash** ← الأفضل
+• 15 طلب/دقيقة
+• 1,500 طلب/يوم
+
+**gemini-2.5-flash**
+• 10 طلبات/دقيقة
+• 250 طلب/يوم
+        """)
+
+        st.markdown("---")
+        st.caption(f"v{APP_VERSION} | يستخدم: oEmbed + Nitter + yt-dlp")
+
+    # ════════════════════════════════════════════
+    # التبويبات الرئيسية
+    # ════════════════════════════════════════════
+    tab_link, tab_img, tab_guide = st.tabs(["🔗 تحليل رابط", "🖼️ تحليل صورة", "📖 دليل الاستخدام"])
+
+    # ──────────────────────────────────────────
+    # تبويب 1: تحليل رابط X
+    # ──────────────────────────────────────────
+    with tab_link:
         st.markdown("### 🔗 أدخل رابط منشور X")
-        tweet_url = st.text_input(
+        tweet_url_input = st.text_input(
             "رابط المنشور",
-            placeholder="https://x.com/username/status/123456789?s=20"
+            placeholder="https://x.com/username/status/123456789",
+            help="يقبل روابط x.com و twitter.com بجميع أشكالها"
         )
-        if tweet_url.strip():
-            if is_tweet_url(tweet_url):
-                tid = extract_tweet_id(tweet_url)
-                usr = extract_username(tweet_url)
-                st.success("✅ رابط صالح | ID: `" + str(tid) + "` | الحساب: @" + str(usr))
+
+        if tweet_url_input:
+            if is_tweet_url(tweet_url_input):
+                tid = extract_tweet_id(tweet_url_input)
+                uname = extract_username_from_url(tweet_url_input)
+                st.success(f"✅ رابط صالح | الحساب: **{uname}** | معرّف المنشور: `{tid}`")
             else:
-                st.error("❌ الرابط غير مدعوم")
+                st.error("❌ الرابط غير مدعوم – أدخل رابط x.com أو twitter.com")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            fetch_btn = st.button("🔍 جلب وتحليل", type="primary", use_container_width=True)
-        with col2:
-            clear_btn = st.button("🗑️ مسح النتائج", use_container_width=True)
+        analyze_btn = st.button("🔍 تحليل المنشور", type="primary", use_container_width=True)
 
-        if clear_btn:
-            for k in ["tweet_result", "analysis_result"]:
-                st.session_state.pop(k, None)
-            st.rerun()
-
-        if fetch_btn:
-            if not tweet_url.strip():
-                st.warning("⚠️ أدخل الرابط أولاً")
-            elif not is_tweet_url(tweet_url):
-                st.error("❌ الرابط غير صالح")
-            elif not gemini_key.strip():
-                st.error("❌ أدخل مفتاح Gemini API في الشريط الجانبي")
+        if analyze_btn:
+            if not tweet_url_input or not is_tweet_url(tweet_url_input):
+                st.error("❌ أدخل رابطاً صالحاً أولاً")
+            elif not api_key:
+                st.error("❌ أدخل مفتاح Gemini API من الشريط الجانبي")
             else:
-                sbox = st.empty()
-                pbar = st.progress(0)
-                with st.spinner("جاري الجلب والتحليل..."):
-                    try:
-                        sbox.info("🔄 جاري جلب المنشور...")
-                        pbar.progress(15)
-                        td = fetch_tweet_with_media(tweet_url, gemini_key, sbox)
-                        if td.get("error"):
-                            sbox.error(td["error"])
-                            pbar.empty()
-                        else:
-                            pbar.progress(50)
-                            if arabic_improve and td.get("text"):
-                                sbox.info("📝 تحسين النص العربي...")
-                                td["text_improved"] = improve_arabic_text(td["text"], gemini_key)
-                            pbar.progress(65)
-                            sbox.info("🤖 جاري التحليل بـ Gemini...")
-                            analysis = analyze_with_gemini(td, gemini_key, analysis_mode)
-                            pbar.progress(100)
-                            st.session_state["tweet_result"]   = td
-                            st.session_state["analysis_result"] = analysis
-                            st.session_state["cnt"] = st.session_state.get("cnt", 0) + 1
-                            if "_error_detail" in analysis:
-                                sbox.warning("⚠️ اكتمل الجلب لكن فشل التحليل — راجع الملخص للتفاصيل")
-                            else:
-                                sbox.success("✅ اكتمل التحليل!")
-                    except Exception as e:
-                        sbox.error("❌ خطأ: " + str(e))
-                        st.code(traceback.format_exc(), language="text")
-                        pbar.empty()
+                status_container = st.empty()
+                progress_bar     = st.progress(0)
+                log_container    = st.expander("📋 سجل التنفيذ", expanded=False)
+                log_lines        = []
 
-        if st.session_state.get("tweet_result"):
-            td = st.session_state["tweet_result"]
-            an = st.session_state.get("analysis_result", {})
+                def update_status(msg):
+                    status_container.info(f"⏳ {msg}")
+                    log_lines.append(msg)
+                    with log_container:
+                        st.text("\n".join(log_lines[-10:]))
 
-            st.markdown("---")
-            st.markdown("### 📊 نتائج التحليل")
+                # ── جلب البيانات ──────────────────────────
+                progress_bar.progress(10)
+                update_status("جارٍ جلب بيانات المنشور...")
+                tweet_data = fetch_tweet_with_media(tweet_url_input, api_key, update_status)
+                progress_bar.progress(40)
 
-            # بطاقة الحساب
-            is_rt     = td.get("is_retweet", False)
-            handle    = td.get("handle", "")
-            d_name    = td.get("display_name", "")
-            rt_handle = td.get("rt_by_handle", "")
-            author_html = (
-                "<div class='author-card'><b>👤 صاحب المنشور الأصلي:</b> "
-                + d_name + " <code>" + handle + "</code>"
-            )
-            if is_rt:
-                author_html += "<br><span class='rt-badge'>🔁 أعاد النشر: " + rt_handle + "</span>"
-            author_html += "</div>"
-            st.markdown(author_html, unsafe_allow_html=True)
+                # ── تحسين النص ────────────────────────────
+                if improve_text and tweet_data.get("text"):
+                    update_status("✨ تحسين النص العربي...")
+                    tweet_data["text"] = improve_arabic_text(tweet_data["text"], api_key, update_status)
+                progress_bar.progress(55)
 
-            c1, c2, c3 = st.columns(3)
-            with c1: st.metric("🆔 ID", td.get("tweet_id", "—"))
-            with c2: st.metric("🤖 النموذج", an.get("model_used", "—"))
-            with c3: st.metric("📎 وسائط", len(td.get("raw_images", [])) + (1 if td.get("video_transcript") else 0))
+                # ── OCR ───────────────────────────────────
+                ocr_texts = []
+                if enable_ocr and tweet_data.get("images"):
+                    update_status(f"🖼️ تحليل {len(tweet_data['images'])} صورة...")
+                    for img in tweet_data["images"][:3]:
+                        t = ocr_image_tesseract(img) or ocr_image_gemini(img, api_key, update_status)
+                        if t.strip():
+                            ocr_texts.append(t)
+                progress_bar.progress(70)
 
-            tr1, tr2, tr3 = st.tabs(["📝 النص والملخص", "🖼️ نص الصور", "🎬 تفريغ الفيديو"])
+                # ── فيديو ─────────────────────────────────
+                video_transcript = ""
+                if enable_video and tweet_data.get("video_path"):
+                    update_status("🎬 تحليل الفيديو...")
+                    video_transcript = transcribe_video_gemini(tweet_data["video_path"], api_key, update_status)
+                progress_bar.progress(80)
 
-            with tr1:
-                if td.get("text"):
-                    st.markdown("#### 📄 النص الأصلي")
-                    st.text_area("", value=td["text"], height=140, disabled=True,
-                                 label_visibility="collapsed", key="orig_t")
-                if td.get("text_improved"):
-                    st.markdown("#### ✨ النص بعد التحسين")
-                    st.text_area("", value=td["text_improved"], height=140, disabled=True,
-                                 label_visibility="collapsed", key="impr_t")
+                # ── دمج المحتوى ───────────────────────────
+                full_text = tweet_data.get("text", "")
+                if ocr_texts:
+                    full_text += "\n\n[نص من الصور]\n" + "\n".join(ocr_texts)
+                if video_transcript:
+                    full_text += "\n\n[تفريغ الفيديو]\n" + video_transcript
+                tweet_data["text"] = full_text
+
+                # ── التحليل ───────────────────────────────
+                update_status("🧠 جارٍ التحليل التنفيذي...")
+                analysis = run_analysis(tweet_data, api_key, analysis_mode, update_status)
+                progress_bar.progress(100)
+                status_container.success("✅ اكتمل التحليل!")
+
                 st.markdown("---")
-                st.markdown("#### 🎯 الملخص التنفيذي")
-                if an.get("executive_summary"):
-                    st.markdown(
-                        "<div class='result-card'>" +
-                        an["executive_summary"].replace("\n", "<br>") +
-                        "</div>", unsafe_allow_html=True)
-                if an.get("key_points") and an["key_points"] != [""]:
-                    st.markdown("#### 🔑 أبرز النقاط")
-                    for p in an["key_points"]:
-                        if p: st.markdown("- " + p)
-                if an.get("risks") and an["risks"] != [""]:
-                    st.markdown("#### ⚠️ المخاطر")
-                    for r in an["risks"]:
-                        if r: st.markdown("- " + r)
-                if an.get("recommendations") and an["recommendations"] != [""]:
-                    st.markdown("#### 💡 التوصيات")
-                    for rc in an["recommendations"]:
-                        if rc: st.markdown("- " + rc)
-                if an.get("sentiment"):
-                    clr = {"إيجابي":"🟢","سلبي":"🔴","محايد":"🟡"}.get(an["sentiment"],"⚪")
-                    st.markdown("**التوجه:** " + clr + " " + an["sentiment"])
-                if an.get("media_meaning"):
-                    st.markdown("#### 📡 الدلالة الإعلامية")
-                    st.markdown(an["media_meaning"])
-                st.markdown("---")
-                out_txt = (
-                    "الحساب: " + handle + "\nالاسم: " + d_name +
-                    "\nID: " + str(td.get("tweet_id","")) +
-                    "\n\nالنص:\n" + td.get("text","") +
-                    "\n\nالملخص التنفيذي:\n" + an.get("executive_summary","")
+                display_analysis_results(analysis, tweet_data)
+
+                # ── عرض النص الخام ────────────────────────
+                with st.expander("📝 النص الكامل للمنشور", expanded=False):
+                    st.text_area("", value=tweet_data.get("text", "(فارغ)"), height=150, disabled=True)
+
+                # ── OCR texts ─────────────────────────────
+                if ocr_texts:
+                    with st.expander("🖼️ النصوص المستخرجة من الصور"):
+                        for i, t in enumerate(ocr_texts, 1):
+                            st.text_area(f"صورة {i}", value=t, height=80, disabled=True)
+
+                # ── تفريغ الفيديو ─────────────────────────
+                if video_transcript:
+                    with st.expander("🎬 تفريغ الفيديو"):
+                        st.text_area("", value=video_transcript, height=100, disabled=True)
+
+                # ── تحميل النتائج ─────────────────────────
+                export_data = {
+                    "tweet_url":   tweet_url_input,
+                    "tweet_data":  {k: v for k, v in tweet_data.items() if k != "video_path"},
+                    "analysis":    analysis,
+                    "ocr_texts":   ocr_texts,
+                    "transcript":  video_transcript,
+                }
+                st.download_button(
+                    label="💾 تحميل النتائج (JSON)",
+                    data=json.dumps(export_data, ensure_ascii=False, indent=2),
+                    file_name=f"analysis_{tweet_data.get('tweet_id','')}.json",
+                    mime="application/json"
                 )
-                st.download_button("⬇️ تنزيل (.txt)",
-                    data=out_txt.encode("utf-8"),
-                    file_name="almashhad_result.txt", mime="text/plain")
 
-            with tr2:
-                if td.get("images_text"):
-                    st.text_area("", value=td["images_text"], height=200,
-                                 disabled=True, label_visibility="collapsed", key="img_t")
-                else:
-                    st.info("لا يوجد نص مستخرج من الصور")
+    # ──────────────────────────────────────────
+    # تبويب 2: تحليل صورة مباشر
+    # ──────────────────────────────────────────
+    with tab_img:
+        st.markdown("### 🖼️ رفع صورة للتحليل المباشر")
+        uploaded = st.file_uploader("ارفع صورة", type=["jpg", "jpeg", "png", "webp", "gif"])
 
-            with tr3:
-                if td.get("video_transcript"):
-                    st.text_area("", value=td["video_transcript"], height=200,
-                                 disabled=True, label_visibility="collapsed", key="vid_t")
-                else:
-                    st.info("لا يوجد تفريغ للفيديو")
+        if uploaded and st.button("🔍 تحليل الصورة", type="primary"):
+            if not api_key:
+                st.error("❌ أدخل مفتاح Gemini API")
+            else:
+                with st.spinner("جارٍ التحليل..."):
+                    # حفظ مؤقت
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded.name).suffix) as tmp:
+                        tmp.write(uploaded.read())
+                        tmp_path = tmp.name
 
-    with tab2:
-        st.markdown("### 🖼️ تحليل صورة مباشرة")
-        upl = st.file_uploader("ارفع صورة", type=["jpg","jpeg","png","webp"])
-        if upl:
-            st.image(upl, use_container_width=True)
-            if st.button("🔍 استخراج النص", type="primary") and gemini_key:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-                    tmp.write(upl.getvalue()); tp = tmp.name
-                with st.spinner("جاري الاستخراج..."):
-                    txt = extract_text_from_image(tp, gemini_key)
-                try: os.remove(tp)
-                except: pass
-                if txt: st.success("✅ تم"); st.text_area("النص المستخرج", value=txt, height=200)
-                else: st.warning("⚠️ لم يُستخرج نص")
+                    # OCR + Gemini
+                    ocr_text = ocr_image_tesseract(tmp_path)
+                    prompt = f"""حلّل هذه الصورة وقدّم:
+1. وصف المحتوى
+2. النصوص المرئية
+3. المعلومات الرئيسية
+4. التوصيات
 
-    with tab3:
+النص المستخرج تلقائياً: {ocr_text or '(لا يوجد)'}"""
+
+                    img_data = open(tmp_path, "rb").read()
+                    img_b64  = base64.b64encode(img_data).decode()
+                    full_prompt = [prompt, {"mime_type": "image/jpeg", "data": img_b64}]
+
+                    status_box = st.empty()
+                    result, model = gemini_generate(full_prompt, api_key, lambda m: status_box.info(m))
+                    os.unlink(tmp_path)
+
+                    if result:
+                        st.success(f"✅ التحليل مكتمل – النموذج: {model}")
+                        st.markdown("---")
+                        st.markdown(result)
+                    else:
+                        st.error("❌ فشل التحليل – راجع الإعدادات أو انتظر دقيقة وأعد المحاولة")
+
+    # ──────────────────────────────────────────
+    # تبويب 3: دليل الاستخدام
+    # ──────────────────────────────────────────
+    with tab_guide:
         st.markdown("""
-        ### 📚 دليل استخدام المشهد التنفيذي v6.2
-        | الميزة | الوصف |
-        |--------|-------|
-        | 🔗 جلب المنشور | oEmbed ← Nitter ← yt-dlp |
-        | 👤 الحساب | اسم + @handle + كشف إعادة النشر 🔁 |
-        | ❌ أخطاء Gemini | يعرض السبب ويقترح الحل |
+### 📖 دليل الاستخدام
+
+#### 🚀 البدء السريع
+1. احصل على مفتاح Gemini مجاني من [Google AI Studio](https://aistudio.google.com/apikey)
+2. أدخل المفتاح في الشريط الجانبي
+3. الصق رابط المنشور وانقر **تحليل**
+
+#### ✅ الروابط المدعومة
+- `https://x.com/user/status/123456789`
+- `https://x.com/user/status/123456789?s=20`
+- `https://twitter.com/user/status/123456789`
+- `https://www.twitter.com/user/status/123456789?ref=...`
+
+#### ⚠️ حل مشكلة 429 (تجاوز الحصة)
+| الحل | الوصف |
+|---|---|
+| انتظر دقيقة | الحد المجاني: 10-15 طلب/دقيقة |
+| استخدم مفتاحاً جديداً | [أنشئ مفتاحاً جديداً](https://aistudio.google.com/apikey) |
+| فعّل الفوترة | يرفع الحد إلى 1000 طلب/دقيقة |
+
+#### 🤖 النماذج المتاحة (2025-2026)
+| النموذج | RPM مجاني | RPD مجاني |
+|---|---|---|
+| gemini-1.5-flash ⭐ | 15 | 1,500 |
+| gemini-1.5-flash-8b | 15 | 1,500 |
+| gemini-2.5-flash | 10 | 250 |
+| gemini-2.5-pro | 5 | 100 |
         """)
 
 if __name__ == "__main__":
