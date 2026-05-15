@@ -1,45 +1,40 @@
-```python
 # -*- coding: utf-8 -*-
 """
 تحليل الصور في نقاط - الإصدار 5.0
-مع تحسين اللغة العربية في الملخص التنفيذي
+تحسين اللغة العربية في الملخص التنفيذي باستخدام Gemini + صححلي
 """
-import sys, re, json, io, time, base64
+
+import sys
+import re
+import json
+import io
+import time
+import base64
 import streamlit as st
+import requests
+from bs4 import BeautifulSoup
+
+# فحص المكتبات
+missing_libs = []
+for lib in ["pytesseract", "cv2", "numpy", "PIL", "google.generativeai"]:
+    try:
+        __import__(lib)
+    except ImportError:
+        missing_libs.append(lib)
+
+if missing_libs:
+    st.error(f"مكتبات مفقودة: {', '.join(missing_libs)}")
+    st.stop()
+
 import pytesseract
 import cv2
 import numpy as np
 from PIL import Image
 import google.generativeai as genai
-import requests
-from bs4 import BeautifulSoup
-
-# ==================== فحص المكتبات ====================
-missing_libs = []
-libs_to_check = [
-    ("streamlit", "streamlit"),
-    ("pytesseract", "pytesseract"),
-    ("cv2", "opencv-python-headless"),
-    ("numpy", "numpy"),
-    ("PIL", "Pillow"),
-    ("google.generativeai", "google-generativeai"),
-    ("requests", "requests"),
-    ("bs4", "beautifulsoup4"),
-]
-for lib, name in libs_to_check:
-    try:
-        __import__(lib)
-    except ImportError:
-        missing_libs.append(name)
-
-if missing_libs:
-    st.error(f"❌ مكتبات مفقودة: {', '.join(missing_libs)}")
-    st.code("pip install " + " ".join(missing_libs))
-    st.stop()
 
 # ==================== إعداد الصفحة ====================
 st.set_page_config(
-    page_title="🔍 تحليل الصور في نقاط",
+    page_title="تحليل الصور في نقاط",
     page_icon="📸",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -53,107 +48,90 @@ st.markdown("""
 * { font-family: 'Tajawal', 'Cairo', 'Segoe UI', sans-serif !important; }
 html, body, [class*='css'] { direction: rtl; text-align: right; font-size: 17px; }
 
-.main { background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #0d1117 100%); }
-
 .main-hero {
-    background: linear-gradient(135deg, #1a1f2e 0%, #16213e 50%, #0f3460 100%);
-    border-radius: 20px; padding: 40px; margin-bottom: 30px;
-    border: 1px solid rgba(99,179,237,0.2);
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #0d1117 100%);
+    border: 1px solid #30363d;
+    border-radius: 16px;
+    padding: 40px;
     text-align: center;
+    margin-bottom: 30px;
 }
-.hero-title {
-    font-size: 2.8rem; font-weight: 900; color: #fff;
-    text-shadow: 0 0 30px rgba(99,179,237,0.5);
-    margin-bottom: 10px;
-}
-.hero-subtitle {
-    font-size: 1.2rem; color: rgba(255,255,255,0.7);
-    margin-bottom: 0;
-}
+.main-hero h1 { font-size: 2.5rem; font-weight: 900; color: #58a6ff; margin: 0; }
+.main-hero p { font-size: 1.1rem; color: #8b949e; margin-top: 10px; }
 
 .stat-card {
-    background: linear-gradient(135deg, #1a1f2e, #16213e);
-    border-radius: 15px; padding: 20px; text-align: center;
-    border: 1px solid rgba(99,179,237,0.2);
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    margin-bottom: 10px;
 }
-.stat-card:hover { transform: translateY(-5px); box-shadow: 0 15px 40px rgba(0,0,0,0.4); }
-.stat-number { font-size: 2rem; font-weight: 900; color: #63b3ed; }
-.stat-label { font-size: 0.9rem; color: rgba(255,255,255,0.6); margin-top: 5px; }
+.stat-card h3 { font-size: 2rem; color: #58a6ff; margin: 0; }
+.stat-card p { color: #8b949e; margin: 5px 0 0 0; font-size: 0.9rem; }
 
 .result-card {
-    background: linear-gradient(135deg, #1a1f2e, #16213e);
-    border-radius: 15px; padding: 20px; margin-bottom: 15px;
-    border: 1px solid rgba(99,179,237,0.15);
-    border-right: 4px solid #63b3ed;
-    transition: all 0.3s ease;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 15px;
+    transition: border-color 0.3s;
 }
-.result-card:hover { border-right-color: #90cdf4; box-shadow: 0 8px 25px rgba(0,0,0,0.3); }
-.field-label {
-    font-size: 0.85rem; color: #90cdf4; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
-}
-.field-value { font-size: 1rem; color: #e2e8f0; line-height: 1.7; }
+.result-card:hover { border-color: #58a6ff; }
+.result-card .field-label { color: #8b949e; font-size: 0.85rem; margin-bottom: 5px; }
+.result-card .field-value { color: #e6edf3; font-size: 1rem; line-height: 1.6; }
 
-.executive-summary {
-    background: linear-gradient(135deg, #1a2744, #0f3460);
-    border-radius: 15px; padding: 25px; margin: 15px 0;
-    border: 2px solid rgba(99,179,237,0.4);
-    font-size: 1.05rem; color: #e2e8f0; line-height: 1.9;
-    text-align: justify;
+.summary-card {
+    background: linear-gradient(135deg, #0d1117, #1c2128);
+    border: 1px solid #388bfd;
+    border-radius: 12px;
+    padding: 25px;
+    margin-top: 20px;
 }
-.executive-summary-header {
-    font-size: 1rem; color: #63b3ed; font-weight: 700;
-    margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
-}
+.summary-card h4 { color: #58a6ff; font-size: 1.1rem; margin-bottom: 15px; }
+.summary-card p { color: #e6edf3; line-height: 1.8; font-size: 1rem; }
 
 .language-badge {
-    display: inline-block; padding: 4px 12px; border-radius: 20px;
-    font-size: 0.75rem; font-weight: 700; margin: 3px;
+    background: linear-gradient(135deg, #1f3a5f, #2a1a3a);
+    border: 1px solid #388bfd;
+    border-radius: 20px;
+    padding: 5px 15px;
+    font-size: 0.8rem;
+    color: #bc8cff;
+    display: inline-block;
+    margin-top: 8px;
 }
-.badge-corrected { background: rgba(72,187,120,0.2); color: #68d391; border: 1px solid rgba(72,187,120,0.3); }
-.badge-original  { background: rgba(237,137,54,0.2);  color: #f6ad55; border: 1px solid rgba(237,137,54,0.3); }
-.badge-gemini    { background: rgba(99,179,237,0.2);  color: #63b3ed; border: 1px solid rgba(99,179,237,0.3); }
 
 .stButton > button {
-    background: linear-gradient(135deg, #2b6cb0, #1a365d) !important;
-    color: #fff !important; border: none !important;
-    border-radius: 10px !important; padding: 10px 24px !important;
-    font-size: 1rem !important; font-weight: 700 !important;
-    transition: all 0.3s ease !important; width: 100% !important;
+    background: linear-gradient(135deg, #238636, #2ea043) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 10px 25px !important;
+    font-size: 1rem !important;
+    font-weight: 600 !important;
+    transition: all 0.3s !important;
+    width: 100% !important;
 }
 .stButton > button:hover {
     transform: translateY(-2px) !important;
-    box-shadow: 0 8px 20px rgba(43,108,176,0.4) !important;
+    box-shadow: 0 4px 15px rgba(35,134,54,0.4) !important;
 }
-
-.stTextInput > div > div > input,
-.stTextArea > div > div > textarea {
-    background: #1a1f2e !important; color: #e2e8f0 !important;
-    border: 1px solid rgba(99,179,237,0.3) !important;
-    border-radius: 10px !important; font-size: 1rem !important;
-    text-align: right !important; direction: rtl !important;
-}
-
-.paste-zone {
-    border: 2px dashed rgba(99,179,237,0.4); border-radius: 15px;
-    padding: 40px; text-align: center; margin: 20px 0;
-    background: rgba(99,179,237,0.03);
-    transition: all 0.3s ease; cursor: pointer;
-}
-.paste-zone:hover { border-color: rgba(99,179,237,0.8); background: rgba(99,179,237,0.08); }
 
 .footer {
-    text-align: center; padding: 30px; margin-top: 50px;
-    color: rgba(255,255,255,0.4); font-size: 0.85rem;
-    border-top: 1px solid rgba(255,255,255,0.1);
+    text-align: center;
+    color: #8b949e;
+    font-size: 0.85rem;
+    padding: 20px;
+    border-top: 1px solid #30363d;
+    margin-top: 40px;
 }
 
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: #1a1f2e; }
-::-webkit-scrollbar-thumb { background: #2b6cb0; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #63b3ed; }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #0d1117; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #58a6ff; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -164,118 +142,116 @@ SEMANTIC_KEYWORDS = {
     "سياسية": ["سياسة", "حكومة", "برلمان", "وزير", "رئيس", "انتخابات"],
     "الترفيه": ["فيلم", "مسلسل", "فنان", "غناء", "كرة", "رياضة"],
     "التجنيس": ["تجنيس", "جنسية", "مواطنة", "هوية", "وافد"],
-    "تهكم_وسخرية": ["هههه", "😂", "🤣", "طبعاً", "بكل تأكيد", "واضح", "معروف"],
+    "تهكم_وسخرية": ["هههه", "😂", "🤣", "طبعاً", "بكل تأكيد", "واضح", "معروف"]
 }
 
 # ==================== دوال مساعدة ====================
+def validate_api_key(key):
+    return key and key.strip().startswith('AIza') and len(key.strip()) > 30
+
 def detect_category(text):
     if not text:
         return "عام"
     text_lower = text.lower()
-    for cat, keywords in SEMANTIC_KEYWORDS.items():
+    for category, keywords in SEMANTIC_KEYWORDS.items():
         if any(kw in text_lower for kw in keywords):
-            return cat
+            return category
     return "عام"
 
 def is_sarcastic_text(text):
     if not text:
         return False
     sarcasm_indicators = SEMANTIC_KEYWORDS.get("تهكم_وسخرية", [])
-    return any(ind in text for ind in sarcasm_indicators)
+    return any(indicator in text for indicator in sarcasm_indicators)
 
 def get_topic_from_text(text):
     if not text:
         return "موضوع عام"
-    for cat, keywords in SEMANTIC_KEYWORDS.items():
-        if any(kw in text for kw in keywords):
-            return cat
-    return "موضوع عام"
+    category = detect_category(text)
+    topics = {
+        "المتطرفون": "قضايا التطرف",
+        "سياسية": "الشأن السياسي",
+        "الترفيه": "الترفيه والرياضة",
+        "التجنيس": "قضايا التجنيس",
+        "تهكم_وسخرية": "تعليق ساخر",
+        "عام": "موضوع عام"
+    }
+    return topics.get(category, "موضوع عام")
 
 def make_x_link(username):
     if not username:
         return "#"
-    username = username.strip().lstrip("@")
-    return f"https://x.com/{username}" if username != "غير مُحدد" else "#"
-
-def validate_api_key(key):
-    return bool(key and key.strip().startswith("AIza") and len(key.strip()) > 30)
+    clean = username.replace("@", "").strip()
+    return f"https://x.com/{clean}" if clean else "#"
 
 # ==================== Session State ====================
 def get_default_api_key():
     try:
-        return st.secrets.get("GEMINI_API_KEY", "")
-    except Exception:
-        return ""
+        return st.secrets.get('GEMINI_API_KEY', '')
+    except:
+        return ''
 
 defaults = {
-    "api_key": get_default_api_key(),
-    "results": [],
-    "analysis_done": False,
-    "url_analysis_done": False,
-    "url_results": None,
-    "tweet_data": None,
-    "total_analyzed": 0,
-    "success_count": 0,
-    "fail_count": 0,
-    "analysis_method": "غير محدد",
-    "used_model": "",
-    "polish_enabled": True,
-    "sahehly_enabled": False,
-    "sahehly_api_key": "",
+    'api_key': get_default_api_key(),
+    'sahehly_api_key': '',
+    'results': [],
+    'analysis_done': False,
+    'url_analysis_done': False,
+    'url_results': None,
+    'tweet_data': None,
+    'analysis_method': '',
+    'used_model': '',
+    'total_analyzed': 0,
+    'success_count': 0,
+    'enable_arabic_enhancement': True,
+    'enhancement_method': 'gemini'
 }
+
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ==================== OCR ====================
 def preprocess_image_ocr(image):
-    img_array = np.array(image.convert("RGB"))
-    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    denoised = cv2.fastNlMeansDenoising(gray, h=10)
-    _, thresh = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    scale = 2.0
-    h, w = thresh.shape
-    resized = cv2.resize(thresh, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
-    return Image.fromarray(resized)
+    img_array = np.array(image)
+    if len(img_array.shape) == 3:
+        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = img_array
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    denoised = cv2.fastNlMeansDenoising(binary, h=10)
+    return Image.fromarray(denoised)
 
 def extract_text_ocr(image):
     try:
         processed = preprocess_image_ocr(image)
-        config = "--oem 3 --psm 6 -l ara+eng"
+        config = '--oem 3 --psm 6 -l ara+eng'
         text = pytesseract.image_to_string(processed, config=config)
         return text.strip() if text.strip() else "لم يتم استخراج نص"
     except Exception as e:
-        return f"خطأ OCR: {str(e)}"
+        return f"خطأ في OCR: {str(e)}"
 
 # ==================== تحسين اللغة العربية ====================
-def polish_arabic_summary_with_gemini(summary_text: str, api_key: str) -> tuple:
-    """
-    تلميع الملخص التنفيذي لغوياً باستخدام Gemini كمدقق لغوي
-    يعوّض عن API صححلي مجاناً
-    الإرجاع: (النص المصحح, هل تم التصحيح)
-    """
+def polish_arabic_with_gemini(summary_text, api_key):
     if not summary_text or len(summary_text.strip()) < 20:
         return summary_text, False
     if not validate_api_key(api_key):
         return summary_text, False
 
-    polish_prompt = f"""أنت مدقق لغوي متخصص في اللغة العربية الفصحى.
-
-المهمة: صحح الملخص التالي لغوياً وإملائياً ونحوياً دون تغيير المعنى مطلقاً.
-
-الملخص الأصلي:
-{summary_text}
-
-قواعد التصحيح الإلزامية:
-1. صحح الأخطاء الإملائية (مثل: إن/أن، الهمزات، التاء المربوطة)
-2. صحح الأخطاء النحوية (التذكير/التأنيث، المفرد/الجمع، حروف الجر)
-3. أصلح علامات الترقيم (الفواصل، النقاط، علامات الاستفهام)
-4. حسّن الصياغة مع الحفاظ على المعنى الكامل
-5. استخدم اللغة العربية الفصحى الراقية
-6. لا تزيد ولا تحذف أي معلومة
-7. حافظ على نفس الطول التقريبي
-
-أعد الملخص المُصحَّح فقط بدون أي تعليق أو شرح."""
+    polish_prompt = (
+        "أنت مدقق لغوي محترف متخصص في اللغة العربية الفصحى.\n\n"
+        "مهمتك: صحح الملخص التالي لغوياً وإملائياً ونحوياً دون تغيير المعنى أو الحذف.\n\n"
+        "الملخص الأصلي:\n"
+        + summary_text +
+        "\n\nقواعد التصحيح الإلزامية:\n"
+        "1. صحح الأخطاء الإملائية (الهمزات، التاء المربوطة، الألف اللينة)\n"
+        "2. صحح الأخطاء النحوية (التذكير/التأنيث، المفرد/الجمع، الإعراب)\n"
+        "3. أصلح علامات الترقيم (الفواصل، النقاط، علامات التعجب)\n"
+        "4. حسّن الصياغة مع الحفاظ التام على المعنى\n"
+        "5. تجنب العامية والمصطلحات الدخيلة\n"
+        "6. لا تزيد معلومات جديدة ولا تحذف معلومات موجودة\n\n"
+        "أعد الملخص المُصحَّح فقط بدون أي كلام إضافي أو شرح."
+    )
 
     try:
         genai.configure(api_key=api_key.strip())
@@ -294,210 +270,194 @@ def polish_arabic_summary_with_gemini(summary_text: str, api_key: str) -> tuple:
         return summary_text, False
 
 
-def correct_with_sahehly_api(text: str, sahehly_key: str) -> tuple:
-    """
-    تصحيح النص باستخدام API صححلي الرسمي (يحتاج خطة أعمال)
-    الإرجاع: (النص المصحح, هل تم التصحيح)
-    """
-    if not text or not sahehly_key:
+def correct_with_sahehly_api(text, sahehly_key):
+    if not text or not sahehly_key or len(sahehly_key.strip()) < 10:
         return text, False
     try:
         headers = {
-            "Authorization": f"Bearer {sahehly_key}",
+            "Authorization": "Bearer " + sahehly_key.strip(),
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            "Accept": "application/json"
         }
         payload = {
-            "text": text,
-            "services": ["spelling", "grammar", "punctuation"],
+            "text": text[:3000],
+            "services": ["spelling", "grammar", "punctuation"]
         }
         response = requests.post(
             "https://sahehly.com/api/v1/correct",
             json=payload,
             headers=headers,
-            timeout=15,
+            timeout=15
         )
         if response.status_code == 200:
             data = response.json()
-            corrected = data.get("corrected_text", "")
-            return (corrected, True) if corrected else (text, False)
-        return text, False
+            corrected = data.get("corrected_text", text)
+            return corrected, True
+        else:
+            return text, False
     except Exception:
         return text, False
 
 
-def enhance_arabic_summary(summary_text: str, api_key: str) -> tuple:
-    """
-    الدالة الرئيسية لتحسين اللغة العربية في الملخص:
-    - إذا كان مفتاح صححلي متاحاً → استخدمه
-    - وإلا → استخدم Gemini كمدقق لغوي
-    الإرجاع: (النص المحسّن, طريقة التحسين)
-    """
-    if not summary_text or len(summary_text.strip()) < 20:
-        return summary_text, "لم يتم التحسين"
+def enhance_arabic_summary(summary_text, api_key, sahehly_key=""):
+    if not st.session_state.get('enable_arabic_enhancement', True):
+        return summary_text, "بدون تحسين", False
 
-    # أولاً: API صححلي (إذا كان متاحاً)
-    if st.session_state.get("sahehly_enabled") and st.session_state.get("sahehly_api_key"):
-        corrected, success = correct_with_sahehly_api(
-            summary_text, st.session_state.sahehly_api_key
-        )
+    # الأولوية 1: صححلي API
+    if sahehly_key and len(sahehly_key.strip()) > 10:
+        corrected, success = correct_with_sahehly_api(summary_text, sahehly_key)
         if success:
-            return corrected, "صححلي API ✨"
+            return corrected, "صححلي API", True
 
-    # ثانياً: Gemini كمدقق لغوي (مجاني)
-    if st.session_state.get("polish_enabled") and validate_api_key(api_key):
-        corrected, success = polish_arabic_summary_with_gemini(summary_text, api_key)
+    # الأولوية 2: Gemini مدقق لغوي
+    if api_key and validate_api_key(api_key):
+        corrected, success = polish_arabic_with_gemini(summary_text, api_key)
         if success:
-            return corrected, "Gemini مدقق لغوي ✨"
+            return corrected, "Gemini مدقق لغوي", True
 
-    return summary_text, "بدون تحسين"
-
-# ==================== parse JSON ====================
-def parse_gemini_json(raw_text):
-    if not raw_text:
-        return None
-    try:
-        cleaned = re.sub(r"```(?:json)?", "", raw_text).strip().rstrip("`").strip()
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if match:
-            return json.loads(match.group())
-    except Exception:
-        pass
-    return None
+    return summary_text, "بدون تحسين", False
 
 # ==================== ملخص تنفيذي ====================
-def generate_executive_summary(results, text=""):
-    if not results and not text:
+def generate_executive_summary(results, text=''):
+    if not results:
         return "لا توجد بيانات كافية لإنشاء الملخص."
-    lines = []
-    if isinstance(results, dict):
-        content = results.get("محتوى_المنشور", "")
-        opinion = results.get("الرأي", "")
-        comment = results.get("التعليق", "")
-        author = results.get("معرف_المنشور", "")
-        if author and author != "غير مُحدد":
-            lines.append(f"نشر المستخدم {author} منشوراً")
-        if content and content != "غير مُحدد":
-            lines.append(f"يتناول: {content[:120]}")
-        if opinion and opinion != "غير مُحدد":
-            lines.append(f"ويعبّر عن موقف: {opinion[:100]}")
-        if comment and comment != "غير مُحدد":
-            lines.append(f"مع تعليق: {comment[:100]}")
-    if text:
-        topic = get_topic_from_text(text)
-        is_sarcasm = is_sarcastic_text(text)
-        lines.append(f"الموضوع الرئيسي: {topic}")
-        if is_sarcasm:
-            lines.append("يحتوي المنشور على نبرة تهكمية أو ساخرة.")
-    return "، ".join(lines) + "." if lines else "محتوى غير واضح."
+    topic = get_topic_from_text(text or str(results))
+    is_sarcastic = is_sarcastic_text(text)
+    summary_parts = []
+    post_author = results.get("معرف_المنشور", "")
+    comment_author = results.get("معرف_التعليق", "")
+    content = results.get("محتوى_المنشور", "")
+    opinion = results.get("الرأي", "")
+    if post_author and post_author != "غير مُحدد":
+        summary_parts.append("نشر المستخدم " + post_author + " منشوراً يتناول " + topic + ".")
+    if content and content != "غير مُحدد":
+        short_content = content[:100] + "..." if len(content) > 100 else content
+        summary_parts.append("تضمّن المنشور: " + short_content)
+    if comment_author and comment_author != "غير مُحدد":
+        summary_parts.append("علّق عليه " + comment_author)
+        if is_sarcastic:
+            summary_parts.append("بأسلوب يحمل طابعاً ساخراً.")
+    if opinion and opinion != "غير مُحدد":
+        summary_parts.append("الرأي المُعبَّر عنه: " + opinion + ".")
+    if not summary_parts:
+        return "منشور يناقش موضوعاً عاماً على منصة X."
+    return " ".join(summary_parts)
 
-# ==================== تحليل ذكي ====================
-def analyze_post_smart(text, mentions=None):
-    if mentions is None:
-        mentions = []
-    if not text or text.strip() == "":
+# ==================== تحليل نص ذكي ====================
+def analyze_post_smart(text, mentions=[]):
+    if not text:
         text = "لا يوجد نص"
     category = detect_category(text)
-    is_sarcasm = is_sarcastic_text(text)
-    opinion = "تهكم وسخرية" if is_sarcasm else f"رأي في موضوع {category}"
-    author = mentions[0] if mentions else "غير مُحدد"
-    commenter = mentions[1] if len(mentions) > 1 else "غير مُحدد"
-    summary = generate_executive_summary({"محتوى_المنشور": text[:150]}, text)
-    return {
-        "معرف_المنشور": author,
-        "معرف_التعليق": commenter,
+    is_sarcastic = is_sarcastic_text(text)
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    result = {
+        "معرف_المنشور": "غير مُحدد",
+        "معرف_التعليق": "غير مُحدد",
         "المدعو": "غير مُحدد",
-        "محتوى_المنشور": text[:300],
+        "محتوى_المنشور": text[:200] if text else "غير مُحدد",
         "المقطع": "غير مُحدد",
         "التعليق": "غير مُحدد",
-        "الرأي": opinion,
-        "الملخص_التنفيذي": summary,
+        "الرأي": "تعليق ساخر" if is_sarcastic else "موضوع " + category,
+        "الملخص_التنفيذي": generate_executive_summary({"محتوى_المنشور": text}, text)
     }
+    for line in lines:
+        at_matches = re.findall(r'@[\w\u0600-\u06FF]+', line)
+        if at_matches and result["معرف_المنشور"] == "غير مُحدد":
+            result["معرف_المنشور"] = at_matches[0]
+        if len(at_matches) > 1 and result["معرف_التعليق"] == "غير مُحدد":
+            result["معرف_التعليق"] = at_matches[1]
+    return result
 
 # ==================== جلب محتوى X ====================
 def fetch_tweet_content(url):
-    result = {
-        "url": url, "text": "", "author": "", "screenshot": None, "error": None
-    }
+    result = {"url": url, "text": "", "author": "", "screenshot": None, "error": None}
     try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "ar,en;q=0.9",
-        }
-        resp = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(resp.text, "html.parser")
-        meta_desc = soup.find("meta", {"name": "description"})
-        og_desc = soup.find("meta", {"property": "og:description"})
-        if meta_desc and meta_desc.get("content"):
-            result["text"] = meta_desc["content"]
-        elif og_desc and og_desc.get("content"):
-            result["text"] = og_desc["content"]
-        og_title = soup.find("meta", {"property": "og:title"})
-        if og_title:
-            result["author"] = og_title.get("content", "")
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            og_desc = soup.find('meta', property='og:description')
+            if og_desc:
+                result["text"] = og_desc.get('content', '')
+            og_title = soup.find('meta', property='og:title')
+            if og_title:
+                result["author"] = og_title.get('content', '')
+        else:
+            result["error"] = "HTTP " + str(response.status_code)
     except Exception as e:
         result["error"] = str(e)
     return result
 
+# ==================== JSON Parser ====================
+def parse_gemini_json(raw_text):
+    if not raw_text:
+        return None
+    try:
+        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+    except:
+        pass
+    try:
+        cleaned = raw_text.strip()
+        if cleaned.startswith('```'):
+            cleaned = re.sub(r'^```\w*\n?', '', cleaned)
+            cleaned = re.sub(r'\n?```$', '', cleaned)
+        return json.loads(cleaned)
+    except:
+        pass
+    return None
+
 # ==================== بروميبتات Gemini ====================
-GEMINI_PROMPT = """
-أنت محلل متخصص في تحليل صور منشورات X (تويتر).
-حلل هذه الصورة واستخرج جميع المعلومات المرئية.
+GEMINI_PROMPT = (
+    "أنت محلل متخصص في تحليل منشورات X (تويتر).\n"
+    "حلل هذه الصورة واستخرج المعلومات المطلوبة.\n\n"
+    "قواعد اللغة العربية الإلزامية في الملخص التنفيذي:\n"
+    "- استخدم اللغة العربية الفصحى الدقيقة حصراً\n"
+    "- راعِ التذكير والتأنيث والجمع والإفراد\n"
+    "- ضع علامات الترقيم في أماكنها الصحيحة\n"
+    "- ابتعد عن العامية والمصطلحات الأجنبية\n\n"
+    'أعد النتائج بتنسيق JSON فقط:\n'
+    '{\n'
+    '  "معرف_المنشور": "معرف المستخدم الذي نشر أصلاً (مع @) أو غير مُحدد",\n'
+    '  "معرف_التعليق": "معرف من علّق (مع @) أو غير مُحدد",\n'
+    '  "المدعو": "اسم أو معرف الشخص المُستشهد به أو غير مُحدد",\n'
+    '  "محتوى_المنشور": "النص الكامل للمنشور الأصلي",\n'
+    '  "المقطع": "وصف المقطع المرفق أو غير مُحدد",\n'
+    '  "التعليق": "نص التعليق كاملاً أو غير مُحدد",\n'
+    '  "الرأي": "الرأي أو الموقف المُعبَّر عنه",\n'
+    '  "الملخص_التنفيذي": "اكتب ملخصاً تنفيذياً احترافياً بلغة عربية فصحى سليمة لا يقل عن 80 كلمة"\n'
+    '}\n\n'
+    'مهم: أعد JSON فقط بدون أي نص إضافي.'
+)
 
-أعد النتائج بتنسيق JSON فقط بدون أي نص إضافي:
-{{
-  "معرف_المنشور": "معرف المستخدم الذي نشر أصلاً (مع @)",
-  "معرف_التعليق": "معرف من علّق (مع @) أو غير مُحدد",
-  "المدعو": "اسم أو معرف الشخص المُستشهد به أو غير مُحدد",
-  "محتوى_المنشور": "النص الكامل للمنشور الأصلي",
-  "المقطع": "وصف المقطع أو الصورة المرفقة أو غير مُحدد",
-  "التعليق": "نص التعليق كاملاً أو غير مُحدد",
-  "الرأي": "الرأي أو الموقف المُعبَّر عنه في المنشور",
-  "الملخص_التنفيذي": "اكتب ملخصاً تنفيذياً احترافياً باللغة العربية الفصحى السليمة لا يقل عن 80 كلمة، يشرح المنشور وسياقه وأهميته مع مراعاة دقة الصياغة والنحو والإملاء"
-}}
-"""
-
-GEMINI_TEXT_PROMPT = """
-أنت محلل لغوي متخصص في تحليل منشورات X (تويتر).
-حلل هذا النص واستخرج المعلومات المطلوبة.
-
-النص: {text}
-
-⚠️ قواعد اللغة العربية الواجب اتباعها في الملخص التنفيذي:
-- استخدم اللغة العربية الفصحى الدقيقة فقط
-- لا تستخدم العامية أو المصطلحات الدخيلة
-- راعِ التذكير والتأنيث والجمع والإفراد
-- ضع علامات الترقيم في أماكنها الصحيحة
-- ابدأ الجمل بأفعال أو أسماء مناسبة
-- تجنب التكرار وضعف الصياغة
-
-أعد النتائج بتنسيق JSON فقط بدون أي نص إضافي:
-{{
-  "معرف_المنشور": "معرف المستخدم الذي نشر أصلاً (مع @)",
-  "معرف_التعليق": "معرف من علّق (مع @) أو غير مُحدد",
-  "المدعو": "اسم أو معرف الشخص المُستشهد به أو غير مُحدد",
-  "محتوى_المنشور": "النص الكامل للمنشور الأصلي",
-  "المقطع": "وصف المقطع أو الصورة المرفقة أو غير مُحدد",
-  "التعليق": "نص التعليق كاملاً أو غير مُحدد",
-  "الرأي": "الرأي أو الموقف المُعبَّر عنه",
-  "الملخص_التنفيذي": "اكتب ملخصاً تنفيذياً احترافياً باللغة العربية الفصحى السليمة لا يقل عن 80 كلمة، يشرح المنشور وسياقه وأهميته مع مراعاة دقة الصياغة والنحو والإملاء"
-}}
-"""
-
-REQUIRED_FIELDS = [
-    "معرف_المنشور", "معرف_التعليق", "المدعو",
-    "محتوى_المنشور", "المقطع", "التعليق",
-    "الرأي", "الملخص_التنفيذي",
-]
+GEMINI_TEXT_PROMPT = (
+    "أنت محلل متخصص في تحليل منشورات X (تويتر).\n"
+    "حلل هذا النص واستخرج المعلومات المطلوبة.\n\n"
+    "النص: REPLACE_TEXT_HERE\n\n"
+    "قواعد اللغة العربية الإلزامية في الملخص التنفيذي:\n"
+    "- استخدم اللغة العربية الفصحى الدقيقة حصراً\n"
+    "- راعِ التذكير والتأنيث والجمع والإفراد\n"
+    "- ضع علامات الترقيم في أماكنها الصحيحة\n"
+    "- ابتعد عن العامية والمصطلحات الأجنبية\n\n"
+    'أعد النتائج بتنسيق JSON فقط:\n'
+    '{\n'
+    '  "معرف_المنشور": "معرف المستخدم الذي نشر أصلاً (مع @) أو غير مُحدد",\n'
+    '  "معرف_التعليق": "معرف من علّق (مع @) أو غير مُحدد",\n'
+    '  "المدعو": "اسم أو معرف الشخص المُستشهد به أو غير مُحدد",\n'
+    '  "محتوى_المنشور": "النص الكامل للمنشور الأصلي",\n'
+    '  "المقطع": "وصف المقطع المرفق أو غير مُحدد",\n'
+    '  "التعليق": "نص التعليق كاملاً أو غير مُحدد",\n'
+    '  "الرأي": "الرأي أو الموقف المُعبَّر عنه",\n'
+    '  "الملخص_التنفيذي": "اكتب ملخصاً تنفيذياً احترافياً بلغة عربية فصحى سليمة لا يقل عن 80 كلمة"\n'
+    '}\n\n'
+    'مهم: أعد JSON فقط بدون أي نص إضافي.'
+)
 
 # ==================== Gemini: تحليل صورة ====================
 def analyze_with_gemini(image, api_key):
     if not validate_api_key(api_key):
-        return None, "❌ مفتاح API غير صالح", ""
+        return None, "مفتاح API غير صالح", ""
     genai.configure(api_key=api_key.strip())
     models_to_try = [
         "gemini-2.0-flash-lite",
@@ -510,48 +470,49 @@ def analyze_with_gemini(image, api_key):
     for model_name in models_to_try:
         try:
             model = genai.GenerativeModel(model_name)
-            if isinstance(image, Image.Image):
-                response = model.generate_content([GEMINI_PROMPT, image])
-            else:
-                response = model.generate_content(GEMINI_PROMPT)
+            response = model.generate_content([GEMINI_PROMPT, image])
             result = parse_gemini_json(response.text)
             if result:
-                for field in REQUIRED_FIELDS:
+                for field in ["معرف_المنشور", "معرف_التعليق", "المدعو",
+                               "محتوى_المنشور", "المقطع", "التعليق",
+                               "الرأي", "الملخص_التنفيذي"]:
                     result.setdefault(field, "غير مُحدد")
-                # تحسين الملخص التنفيذي
-                if st.session_state.get("polish_enabled"):
-                    enhanced, method = enhance_arabic_summary(
-                        result.get("الملخص_التنفيذي", ""), api_key
+                if st.session_state.get('enable_arabic_enhancement', True):
+                    enhanced, method, success = enhance_arabic_summary(
+                        result.get("الملخص_التنفيذي", ""),
+                        api_key,
+                        st.session_state.get('sahehly_api_key', '')
                     )
-                    result["الملخص_التنفيذي"] = enhanced
-                    result["_polish_method"] = method
+                    if success:
+                        result["الملخص_التنفيذي"] = enhanced
+                        result["_enhancement_method"] = method
                 return result, None, model_name
         except Exception as e:
             err = str(e)
             if any(x in err for x in ["QUOTA_EXCEEDED", "429", "quota", "rate_limit"]):
-                last_error = f"⚠️ {model_name}: تجاوز الحصة"
+                last_error = model_name + ": تجاوز الحصة"
                 time.sleep(2)
                 continue
             elif any(x in err for x in ["404", "not found", "MODEL_NOT_FOUND"]):
-                last_error = f"⚠️ {model_name}: غير متاح"
+                last_error = model_name + ": غير متاح"
                 continue
             elif any(x in err for x in ["API_KEY_INVALID", "INVALID_ARGUMENT"]):
-                return None, "❌ مفتاح API غير صالح", ""
+                return None, "مفتاح API غير صالح", ""
             elif "PERMISSION_DENIED" in err:
-                return None, "❌ لا توجد صلاحية - تحقق من المفتاح", ""
+                return None, "لا توجد صلاحية", ""
             else:
-                last_error = f"⚠️ {model_name}: {err[:60]}"
+                last_error = model_name + ": " + err[:60]
                 continue
-    return None, f"❌ فشل التحليل. آخر خطأ: {last_error}", ""
-
+    return None, "فشل التحليل. آخر خطأ: " + last_error, ""
 
 # ==================== Gemini: تحليل نص ====================
 def analyze_text_with_gemini(text, api_key):
     if not validate_api_key(api_key):
-        return None, "❌ مفتاح API غير صالح", ""
+        return None, "مفتاح API غير صالح", ""
 
-    safe_prompt = GEMINI_TEXT_PROMPT.replace("{text}", text[:2000])
+    safe_prompt = GEMINI_TEXT_PROMPT.replace("REPLACE_TEXT_HERE", text[:2000])
     genai.configure(api_key=api_key.strip())
+
     models_to_try = [
         "gemini-2.0-flash-lite",
         "gemini-2.5-flash",
@@ -559,6 +520,7 @@ def analyze_text_with_gemini(text, api_key):
         "gemini-1.5-flash-latest",
         "gemini-1.5-flash",
     ]
+
     last_error = ""
     for model_name in models_to_try:
         try:
@@ -566,565 +528,415 @@ def analyze_text_with_gemini(text, api_key):
             response = model.generate_content(safe_prompt)
             result = parse_gemini_json(response.text)
             if result:
-                for field in REQUIRED_FIELDS:
+                for field in ["معرف_المنشور", "معرف_التعليق", "المدعو",
+                               "محتوى_المنشور", "المقطع", "التعليق",
+                               "الرأي", "الملخص_التنفيذي"]:
                     result.setdefault(field, "غير مُحدد")
-                # تحسين الملخص التنفيذي
-                if st.session_state.get("polish_enabled"):
-                    enhanced, method = enhance_arabic_summary(
-                        result.get("الملخص_التنفيذي", ""), api_key
+                if st.session_state.get('enable_arabic_enhancement', True):
+                    enhanced, method, success = enhance_arabic_summary(
+                        result.get("الملخص_التنفيذي", ""),
+                        api_key,
+                        st.session_state.get('sahehly_api_key', '')
                     )
-                    result["الملخص_التنفيذي"] = enhanced
-                    result["_polish_method"] = method
+                    if success:
+                        result["الملخص_التنفيذي"] = enhanced
+                        result["_enhancement_method"] = method
                 return result, None, model_name
         except Exception as e:
             err = str(e)
             if any(x in err for x in ["QUOTA_EXCEEDED", "429", "quota", "rate_limit"]):
-                last_error = f"⚠️ {model_name}: تجاوز الحصة"
+                last_error = model_name + ": تجاوز الحصة"
                 time.sleep(2)
                 continue
             elif any(x in err for x in ["404", "not found", "MODEL_NOT_FOUND"]):
-                last_error = f"⚠️ {model_name}: غير متاح"
+                last_error = model_name + ": غير متاح"
                 continue
             elif any(x in err for x in ["API_KEY_INVALID", "INVALID_ARGUMENT"]):
-                return None, "❌ مفتاح API غير صالح", ""
+                return None, "مفتاح API غير صالح", ""
             elif "PERMISSION_DENIED" in err:
-                return None, "❌ لا توجد صلاحية - تحقق من المفتاح", ""
+                return None, "لا توجد صلاحية", ""
             else:
-                last_error = f"⚠️ {model_name}: {err[:60]}"
+                last_error = model_name + ": " + err[:60]
                 continue
-    return None, f"❌ فشل التحليل النصي. آخر خطأ: {last_error}", ""
-
+    return None, "فشل التحليل النصي. آخر خطأ: " + last_error, ""
 
 # ==================== تكوين الحقول ====================
 FIELD_CONFIG = {
-    "معرف_المنشور":   {"icon": "👤", "label": "صاحب المنشور",       "color": "#63b3ed"},
-    "معرف_التعليق":   {"icon": "💬", "label": "صاحب التعليق",       "color": "#68d391"},
-    "المدعو":          {"icon": "🎯", "label": "الشخص المُستشهد به", "color": "#f6ad55"},
-    "محتوى_المنشور":  {"icon": "📝", "label": "محتوى المنشور",      "color": "#fc8181"},
-    "المقطع":          {"icon": "🎬", "label": "المقطع المرفق",      "color": "#b794f4"},
-    "التعليق":         {"icon": "💭", "label": "نص التعليق",         "color": "#76e4f7"},
-    "الرأي":           {"icon": "🔍", "label": "الرأي والموقف",      "color": "#fbb6ce"},
-    "الملخص_التنفيذي": {"icon": "📋", "label": "الملخص التنفيذي",   "color": "#90cdf4"},
+    "معرف_المنشور":    {"icon": "👤", "label": "صاحب المنشور",          "color": "blue"},
+    "معرف_التعليق":    {"icon": "💬", "label": "صاحب التعليق",          "color": "green"},
+    "المدعو":          {"icon": "🎯", "label": "الشخص المُستشهد به",    "color": "orange"},
+    "محتوى_المنشور":   {"icon": "📝", "label": "محتوى المنشور",         "color": "blue"},
+    "المقطع":          {"icon": "🎬", "label": "المقطع المرفق",         "color": "purple"},
+    "التعليق":         {"icon": "💭", "label": "نص التعليق",            "color": "green"},
+    "الرأي":           {"icon": "🔍", "label": "الرأي والموقف",         "color": "orange"},
+    "الملخص_التنفيذي": {"icon": "📋", "label": "الملخص التنفيذي",      "color": "purple"}
 }
 
 # ==================== عرض النتائج ====================
-def render_result_card(field_key, value, config, selected_fields):
-    if field_key not in selected_fields:
-        return
+def render_result_card(field_key, value, index=0):
     if not value or value in ["غير مُحدد", "غير محدد", ""]:
         return
-    cfg = config.get(field_key, {})
-    icon = cfg.get("icon", "•")
-    label = cfg.get("label", field_key)
-    color = cfg.get("color", "#63b3ed")
-
+    conf = FIELD_CONFIG.get(field_key, {"icon": "📌", "label": field_key})
     if field_key == "الملخص_التنفيذي":
-        polish_method = ""
-        if isinstance(value, dict):
-            polish_method = value.get("_polish_method", "")
-        st.markdown(f"""
-        <div class="executive-summary">
-            <div class="executive-summary-header">
-                {icon} {label}
-                {"<span class='language-badge badge-corrected'>✨ " + polish_method + "</span>" if polish_method else ""}
-            </div>
-            <div style="font-size:1.05rem; line-height:1.9; text-align:justify;">{value}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            '<div class="summary-card">'
+            '<h4>' + conf['icon'] + ' ' + conf['label'] + '</h4>'
+            '<p>' + str(value) + '</p>'
+            '</div>',
+            unsafe_allow_html=True
+        )
     else:
-        x_link = ""
-        if field_key in ["معرف_المنشور", "معرف_التعليق", "المدعو"]:
-            link = make_x_link(str(value))
-            if link != "#":
-                x_link = f'<a href="{link}" target="_blank" style="color:{color};font-size:0.8rem;margin-right:8px;">🔗 الملف الشخصي</a>'
-        st.markdown(f"""
-        <div class="result-card" style="border-right-color:{color};">
-            <div class="field-label">{icon} {label}</div>
-            <div class="field-value">{value} {x_link}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-def render_all_results(result, selected_fields, image=None):
-    if not result:
-        st.error("❌ لم يتم الحصول على نتائج.")
-        return
-
-    polish_method = result.get("_polish_method", "")
-    method_badge = f"<span class='language-badge badge-corrected'>✨ {polish_method}</span>" if polish_method else ""
-
-    st.markdown(f"""
-    <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px; flex-wrap:wrap;">
-        <h3 style="color:#63b3ed; margin:0;">📊 نتائج التحليل</h3>
-        {method_badge}
-        <span class='language-badge badge-gemini'>🤖 {result.get("_model", "Gemini")}</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2)
-    fields_left  = ["معرف_المنشور", "معرف_التعليق", "المدعو", "المقطع"]
-    fields_right = ["محتوى_المنشور", "التعليق", "الرأي"]
-
-    with col1:
-        for f in fields_left:
-            render_result_card(f, result.get(f, ""), FIELD_CONFIG, selected_fields)
-    with col2:
-        for f in fields_right:
-            render_result_card(f, result.get(f, ""), FIELD_CONFIG, selected_fields)
-
-    if "الملخص_التنفيذي" in selected_fields:
-        render_result_card(
-            "الملخص_التنفيذي",
-            result.get("الملخص_التنفيذي", ""),
-            FIELD_CONFIG,
-            selected_fields,
+        st.markdown(
+            '<div class="result-card">'
+            '<div class="field-label">' + conf['icon'] + ' ' + conf['label'] + '</div>'
+            '<div class="field-value">' + str(value) + '</div>'
+            '</div>',
+            unsafe_allow_html=True
         )
 
-    if image:
-        with st.expander("🖼️ الصورة الأصلية"):
-            st.image(image, use_column_width=True)
+def render_all_results(result, selected_fields, image_index=0):
+    if not result:
+        st.warning("لا توجد نتائج للعرض")
+        return
+    enhancement_method = result.get("_enhancement_method", "")
+    if enhancement_method:
+        st.markdown(
+            '<div style="text-align:right; margin-bottom:10px;">'
+            '<span class="language-badge">تم تحسين اللغة بواسطة: ' + enhancement_method + '</span>'
+            '</div>',
+            unsafe_allow_html=True
+        )
+    for field_key in selected_fields:
+        if field_key in result:
+            render_result_card(field_key, result[field_key], image_index)
+    if "الملخص_التنفيذي" not in selected_fields and "الملخص_التنفيذي" in result:
+        render_result_card("الملخص_التنفيذي", result["الملخص_التنفيذي"], image_index)
 
-
-def download_buttons(result):
+def download_buttons(result, prefix="result"):
     if not result:
         return
     col1, col2 = st.columns(2)
     with col1:
-        lines = [f"{FIELD_CONFIG.get(k, {}).get('label', k)}: {v}"
-                 for k, v in result.items() if not k.startswith("_")]
-        txt_data = "\n".join(lines)
-        st.download_button("📥 تحميل TXT", txt_data,
-                           file_name="analysis.txt", mime="text/plain", key=f"dl_txt_{id(result)}")
+        txt_content = "\n".join([k + ": " + str(v) for k, v in result.items() if not k.startswith("_")])
+        st.download_button("تحميل TXT", txt_content, prefix + ".txt", "text/plain")
     with col2:
-        json_data = json.dumps(
-            {k: v for k, v in result.items() if not k.startswith("_")},
-            ensure_ascii=False, indent=2
-        )
-        st.download_button("📥 تحميل JSON", json_data,
-                           file_name="analysis.json", mime="application/json", key=f"dl_json_{id(result)}")
-
+        clean_result = {k: v for k, v in result.items() if not k.startswith("_")}
+        st.download_button("تحميل JSON", json.dumps(clean_result, ensure_ascii=False, indent=2), prefix + ".json", "application/json")
 
 # ==================== تحليل صورة كاملة ====================
 def analyze_image_full(image, api_key, use_gemini):
+    result, method, model_name = None, "غير محدد", ""
     if use_gemini and validate_api_key(api_key):
         result, err, model_name = analyze_with_gemini(image, api_key)
         if result:
-            result["_model"] = model_name
-            result["_method"] = "Gemini AI"
-            return result, None
-        return None, err or "فشل التحليل"
-    else:
+            method = "Gemini (" + model_name + ")"
+    if not result:
         ocr_text = extract_text_ocr(image)
         result = analyze_post_smart(ocr_text)
-        result["_model"] = "OCR"
-        result["_method"] = "OCR"
-        return result, None
-
+        method = "OCR + تحليل ذكي"
+        if st.session_state.get('enable_arabic_enhancement', True) and validate_api_key(api_key):
+            enhanced, emethod, success = enhance_arabic_summary(
+                result.get("الملخص_التنفيذي", ""),
+                api_key,
+                st.session_state.get('sahehly_api_key', '')
+            )
+            if success:
+                result["الملخص_التنفيذي"] = enhanced
+                result["_enhancement_method"] = emethod
+    return result, method, model_name
 
 # ==================== الشريط الجانبي ====================
 with st.sidebar:
     st.markdown("## ⚙️ إعدادات التحليل")
-    st.markdown("---")
 
     analysis_mode = st.radio(
-        "🔧 طريقة التحليل",
+        "طريقة التحليل",
         ["🤖 Gemini AI (أدق)", "📝 OCR (مجاني)"],
-        index=0,
+        index=0
     )
     use_gemini = "Gemini" in analysis_mode
 
     if use_gemini:
-        st.markdown("### 🔑 مفتاح Gemini API")
         api_input = st.text_input(
-            "أدخل المفتاح",
+            "🔑 مفتاح Gemini API",
             value=st.session_state.api_key,
             type="password",
-            key="api_input_field",
+            placeholder="AIza..."
         )
         if api_input != st.session_state.api_key:
             st.session_state.api_key = api_input
-
         if st.session_state.api_key:
             if validate_api_key(st.session_state.api_key):
                 st.success("✅ مفتاح صالح")
             else:
                 st.error("❌ مفتاح غير صالح")
-
-        if st.button("🔍 اختبار النماذج المتاحة"):
-            if validate_api_key(st.session_state.api_key):
-                with st.spinner("جارٍ الاختبار..."):
-                    try:
-                        genai.configure(api_key=st.session_state.api_key.strip())
-                        models = list(genai.list_models())
-                        gemini_models = [
-                            m.name for m in models
-                            if "generateContent" in (m.supported_generation_methods or [])
-                        ]
-                        st.success(f"✅ {len(gemini_models)} نموذج متاح")
-                        for m in gemini_models[:5]:
-                            st.text(f"• {m.replace('models/', '')}")
-                    except Exception as e:
-                        st.error(f"❌ {str(e)[:100]}")
-            else:
-                st.warning("⚠️ أدخل مفتاحاً صالحاً أولاً")
-
         st.markdown("🔗 [احصل على مفتاح مجاني](https://aistudio.google.com/apikey)")
 
-    # --- تحسين اللغة العربية ---
     st.markdown("---")
     st.markdown("### ✨ تحسين اللغة العربية")
-    st.session_state.polish_enabled = st.toggle(
-        "🔤 تحسين الملخص لغوياً (Gemini)",
-        value=st.session_state.polish_enabled,
-        help="يستخدم Gemini كمدقق لغوي لتصحيح الإملاء والنحو في الملخص التنفيذي"
+    enable_enhancement = st.toggle(
+        "تفعيل التدقيق اللغوي للملخص",
+        value=st.session_state.enable_arabic_enhancement
     )
-    if st.session_state.polish_enabled:
-        st.info("✅ Gemini سيُدقق الملخص لغوياً بعد كل تحليل")
+    st.session_state.enable_arabic_enhancement = enable_enhancement
 
-    st.session_state.sahehly_enabled = st.toggle(
-        "📝 استخدام API صححلي (اختياري)",
-        value=st.session_state.sahehly_enabled,
-        help="يتطلب اشتراك خطة الأعمال من sahehly.com"
-    )
-    if st.session_state.sahehly_enabled:
-        sahehly_key_input = st.text_input(
-            "مفتاح API صححلي",
-            value=st.session_state.sahehly_api_key,
-            type="password",
-            help="احصل عليه من: sahehly.com/Pricing/AddBusinessRequest"
-        )
-        if sahehly_key_input != st.session_state.sahehly_api_key:
-            st.session_state.sahehly_api_key = sahehly_key_input
-        st.markdown("🔗 [الحصول على مفتاح صححلي](https://sahehly.com/Pricing/AddBusinessRequest)")
+    if enable_enhancement:
+        st.info("يستخدم Gemini لتدقيق الإملاء والنحو في الملخص")
+        with st.expander("🔑 مفتاح صححلي API (اختياري)"):
+            sahehly_input = st.text_input(
+                "مفتاح صححلي للأعمال",
+                value=st.session_state.sahehly_api_key,
+                type="password",
+                placeholder="أدخل مفتاح صححلي إذا كان لديك اشتراك"
+            )
+            if sahehly_input != st.session_state.sahehly_api_key:
+                st.session_state.sahehly_api_key = sahehly_input
+            st.markdown("🔗 [اشترك في صححلي للأعمال](https://sahehly.com/Pricing/AddBusinessRequest)")
 
-    # --- الحقول المعروضة ---
     st.markdown("---")
     st.markdown("### 📋 الحقول المعروضة")
     selected_fields = st.multiselect(
         "اختر الحقول",
         list(FIELD_CONFIG.keys()),
         default=list(FIELD_CONFIG.keys()),
-        format_func=lambda x: f"{FIELD_CONFIG[x]['icon']} {FIELD_CONFIG[x]['label']}",
+        format_func=lambda x: FIELD_CONFIG[x]['icon'] + " " + FIELD_CONFIG[x]['label']
     )
 
-    # --- إحصاءات الجلسة ---
     st.markdown("---")
-    st.markdown("### 📊 إحصاءات الجلسة")
-    st.metric("إجمالي التحليلات", st.session_state.total_analyzed)
-    st.metric("ناجح", st.session_state.success_count)
-    st.metric("فاشل", st.session_state.fail_count)
+    st.markdown("### 📊 إحصائيات الجلسة")
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        st.metric("📸 محلّلة", st.session_state.total_analyzed)
+    with col_s2:
+        st.metric("✅ ناجحة", st.session_state.success_count)
 
     if st.button("🗑️ مسح جميع النتائج"):
-        for key in ["results", "url_results", "tweet_data"]:
-            st.session_state[key] = [] if key == "results" else None
-        for key in ["analysis_done", "url_analysis_done"]:
-            st.session_state[key] = False
-        for key in ["total_analyzed", "success_count", "fail_count"]:
-            st.session_state[key] = 0
+        for key in ['results', 'analysis_done', 'url_analysis_done',
+                    'url_results', 'tweet_data', 'total_analyzed', 'success_count']:
+            st.session_state[key] = [] if key == 'results' else (False if 'done' in key else (0 if 'count' in key or 'analyzed' in key else None))
         st.rerun()
 
-    # --- القاموس الدلالي ---
-    st.markdown("---")
     with st.expander("📖 القاموس الدلالي"):
-        for cat, keywords in SEMANTIC_KEYWORDS.items():
-            st.markdown(f"**{cat}:** {', '.join(keywords[:4])}...")
-
+        for cat, words in SEMANTIC_KEYWORDS.items():
+            st.markdown("**" + cat + "**: " + ", ".join(words[:4]) + "...")
 
 # ==================== الواجهة الرئيسية ====================
 st.markdown("""
 <div class="main-hero">
-    <div class="hero-title">🔍 تحليل الصور في نقاط</div>
-    <div class="hero-subtitle">تحليل منشورات منصة X بالذكاء الاصطناعي · بسرعة ودقة</div>
+    <h1>🔍 تحليل الصور في نقاط</h1>
+    <p>تحليل منشورات منصة X بالذكاء الاصطناعي · بسرعة ودقة</p>
+    <p><span class="language-badge">✨ الإصدار 5.0 — تدقيق لغوي ذكي</span></p>
 </div>
 """, unsafe_allow_html=True)
 
-# بطاقات الإحصاء
 col1, col2, col3, col4 = st.columns(4)
-stats = [
-    ("📊", st.session_state.total_analyzed, "إجمالي التحليلات"),
-    ("✅", st.session_state.success_count,   "تحليلات ناجحة"),
-    ("❌", st.session_state.fail_count,       "تحليلات فاشلة"),
-    ("🤖", "Gemini" if use_gemini else "OCR", "طريقة التحليل"),
-]
-for col, (icon, val, lbl) in zip([col1, col2, col3, col4], stats):
-    with col:
-        st.markdown(f"""
-        <div class="stat-card">
-            <div style="font-size:2rem;">{icon}</div>
-            <div class="stat-number">{val}</div>
-            <div class="stat-label">{lbl}</div>
-        </div>
-        """, unsafe_allow_html=True)
+with col1:
+    st.markdown('<div class="stat-card"><h3>' + str(st.session_state.total_analyzed) + '</h3><p>📸 صور محلّلة</p></div>', unsafe_allow_html=True)
+with col2:
+    st.markdown('<div class="stat-card"><h3>' + str(st.session_state.success_count) + '</h3><p>✅ تحليل ناجح</p></div>', unsafe_allow_html=True)
+with col3:
+    enhancement_status = "🟢 مفعّل" if st.session_state.enable_arabic_enhancement else "🔴 معطّل"
+    st.markdown('<div class="stat-card"><h3>' + enhancement_status + '</h3><p>✨ التدقيق اللغوي</p></div>', unsafe_allow_html=True)
+with col4:
+    sahehly_status = "🟢 صححلي" if st.session_state.sahehly_api_key else "🤖 Gemini"
+    st.markdown('<div class="stat-card"><h3>' + sahehly_status + '</h3><p>🔧 محرك التدقيق</p></div>', unsafe_allow_html=True)
 
-st.markdown("<br>", unsafe_allow_html=True)
-
-# ==================== التبويبات ====================
+# ==================== تبويبات ====================
 tab_paste, tab_upload, tab_url, tab_guide = st.tabs([
     "📋 لصق من الحافظة",
     "📤 رفع صور",
     "🔗 رابط X",
-    "📖 دليل الاستخدام",
+    "📖 دليل الاستخدام"
 ])
 
-# ---- تبويب اللصق ----
+# ==================== تبويب اللصق ====================
 with tab_paste:
     st.markdown("### 📋 لصق صورة من الحافظة")
-    st.markdown("""
-    <div class="paste-zone" id="paste-zone">
-        <div style="font-size:3rem;">📋</div>
-        <div style="color:#63b3ed; font-size:1.1rem; margin-top:10px;">
-            انسخ الصورة (Ctrl+C) ثم اضغط Ctrl+V في منطقة اللصق أدناه
-        </div>
-        <div style="color:rgba(255,255,255,0.5); font-size:0.9rem; margin-top:5px;">
-            PNG · JPG · WebP · BMP
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    paste_file = st.file_uploader(
-        "أو ارفع الصورة مباشرة",
-        type=["png", "jpg", "jpeg", "webp", "bmp"],
-        key="paste_uploader",
-        label_visibility="collapsed",
-    )
-
+    st.info("انسخ الصورة (Ctrl+C) ثم ارفعها باستخدام الزر أدناه")
+    paste_file = st.file_uploader("اختر صورة أو الصقها", type=['png', 'jpg', 'jpeg', 'webp'], key="paste_uploader")
     if paste_file:
         image = Image.open(paste_file)
         st.image(image, caption="الصورة المُختارة", use_column_width=True)
-
         if st.button("🚀 تحليل الصورة", key="analyze_paste"):
-            with st.spinner("⏳ جارٍ التحليل..."):
-                result, err = analyze_image_full(image, st.session_state.api_key, use_gemini)
+            with st.spinner("جارٍ التحليل..."):
+                result, method, model_name = analyze_image_full(image, st.session_state.api_key, use_gemini)
+                st.session_state.total_analyzed += 1
                 if result:
                     st.session_state.success_count += 1
-                    st.session_state.total_analyzed += 1
-                    st.success(f"✅ تم التحليل بنجاح")
-                    render_all_results(result, selected_fields, image)
-                    download_buttons(result)
+                    st.success("تم التحليل بنجاح | الطريقة: " + method)
+                    emethod = result.get('_enhancement_method', '')
+                    if emethod:
+                        st.info("تم تحسين اللغة بواسطة: " + emethod)
+                    render_all_results(result, selected_fields)
+                    download_buttons(result, "paste_result")
                 else:
-                    st.session_state.fail_count += 1
-                    st.session_state.total_analyzed += 1
-                    st.error(f"❌ {err}")
+                    st.error("فشل التحليل. جرّب OCR أو تحقق من المفتاح.")
 
-
-# ---- تبويب رفع الصور ----
+# ==================== تبويب رفع الصور ====================
 with tab_upload:
-    st.markdown("### 📤 رفع صور للتحليل")
+    st.markdown("### 📤 رفع صور متعددة")
     uploaded_files = st.file_uploader(
-        "اسحب الصور هنا أو انقر للاختيار",
-        type=["png", "jpg", "jpeg", "webp", "bmp"],
+        "اسحب الصور هنا أو اضغط للاختيار",
+        type=['png', 'jpg', 'jpeg', 'webp', 'bmp'],
         accept_multiple_files=True,
-        key="batch_uploader",
+        key="batch_uploader"
     )
-
     if uploaded_files:
-        st.info(f"📁 تم اختيار {len(uploaded_files)} صورة")
-        cols = st.columns(min(len(uploaded_files), 4))
-        images = []
+        st.markdown("#### الصور المُختارة (" + str(len(uploaded_files)) + ")")
+        cols = st.columns(min(len(uploaded_files), 3))
         for i, f in enumerate(uploaded_files):
-            img = Image.open(f)
-            images.append(img)
-            with cols[i % 4]:
+            with cols[i % 3]:
+                img = Image.open(f)
                 st.image(img, caption=f.name, use_column_width=True)
 
-        if st.button("🚀 تحليل الكل", key="analyze_batch"):
-            progress = st.progress(0)
+        if st.button("🚀 تحليل جميع الصور", key="analyze_batch"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             batch_results = []
-            for i, img in enumerate(images):
-                with st.spinner(f"⏳ تحليل {i+1}/{len(images)}..."):
-                    result, err = analyze_image_full(img, st.session_state.api_key, use_gemini)
-                    if result:
-                        batch_results.append(result)
-                        st.session_state.success_count += 1
-                    else:
-                        st.session_state.fail_count += 1
-                    st.session_state.total_analyzed += 1
-                    progress.progress((i + 1) / len(images))
-
+            for i, uploaded_file in enumerate(uploaded_files):
+                status_text.text("جارٍ تحليل الصورة " + str(i+1) + " من " + str(len(uploaded_files)) + "...")
+                image = Image.open(uploaded_file)
+                result, method, model_name = analyze_image_full(image, st.session_state.api_key, use_gemini)
+                st.session_state.total_analyzed += 1
+                if result:
+                    st.session_state.success_count += 1
+                    batch_results.append({"file": uploaded_file.name, "result": result, "method": method})
+                progress_bar.progress((i + 1) / len(uploaded_files))
+                time.sleep(0.5)
             st.session_state.results = batch_results
             st.session_state.analysis_done = True
+            status_text.text("تم تحليل " + str(len(batch_results)) + " صورة!")
             st.rerun()
 
     if st.session_state.analysis_done and st.session_state.results:
-        st.markdown(f"### 📊 نتائج التحليل ({len(st.session_state.results)} صورة)")
-        for i, result in enumerate(st.session_state.results):
-            with st.expander(f"📸 الصورة {i+1} — {result.get('معرف_المنشور', 'غير مُحدد')}"):
-                render_all_results(result, selected_fields)
-                download_buttons(result)
+        st.markdown("### نتائج التحليل (" + str(len(st.session_state.results)) + " صورة)")
+        for i, item in enumerate(st.session_state.results):
+            with st.expander(item['file'] + " — " + item['method'], expanded=(i == 0)):
+                emethod = item['result'].get('_enhancement_method', '')
+                if emethod:
+                    st.markdown('<div style="text-align:right;"><span class="language-badge">✨ ' + emethod + '</span></div>', unsafe_allow_html=True)
+                render_all_results(item['result'], selected_fields, i)
+                download_buttons(item['result'], "result_" + str(i+1))
 
-
-# ---- تبويب رابط X ----
+# ==================== تبويب رابط X ====================
 with tab_url:
     st.markdown("### 🔗 تحليل منشور من رابط X")
     tweet_url = st.text_input(
         "أدخل رابط المنشور",
         placeholder="https://x.com/username/status/...",
-        key="tweet_url_input",
+        key="tweet_url_input"
     )
-
-    col_fetch, col_analyze = st.columns(2)
-
-    with col_fetch:
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
         if st.button("📥 جلب المنشور فقط", key="fetch_only"):
             if tweet_url and ("x.com" in tweet_url or "twitter.com" in tweet_url):
-                with st.spinner("⏳ جارٍ الجلب..."):
+                with st.spinner("جارٍ الجلب..."):
                     tweet_data = fetch_tweet_content(tweet_url)
                     st.session_state.tweet_data = tweet_data
-                if tweet_data.get("text"):
-                    st.success("✅ تم جلب المنشور")
-                else:
-                    st.warning("⚠️ لم يتم استخراج نص — قد يكون المنشور خاصاً")
+                st.rerun()
             else:
-                st.warning("⚠️ الرجاء إدخال رابط X/Twitter صحيح")
+                st.warning("أدخل رابط X/Twitter صحيح")
 
-    with col_analyze:
+    with col_btn2:
         if st.button("🚀 جلب وتحليل", key="fetch_analyze"):
             if tweet_url and ("x.com" in tweet_url or "twitter.com" in tweet_url):
-                with st.spinner("⏳ جارٍ الجلب والتحليل..."):
+                with st.spinner("جارٍ الجلب والتحليل..."):
                     tweet_data = fetch_tweet_content(tweet_url)
                     st.session_state.tweet_data = tweet_data
-
                     result, method, model_name = None, "غير محدد", ""
                     tweet_text = tweet_data.get("text", "").strip()
 
-                    # 1️⃣ Gemini على النص
                     if tweet_text and use_gemini and validate_api_key(st.session_state.api_key):
-                        result, err, model_name = analyze_text_with_gemini(
-                            tweet_text, st.session_state.api_key
-                        )
+                        result, err, model_name = analyze_text_with_gemini(tweet_text, st.session_state.api_key)
                         if result:
-                            method = "Gemini (نص)"
+                            method = "Gemini نص (" + model_name + ")"
 
-                    # 2️⃣ Gemini على الصورة
                     if not result and tweet_data.get("screenshot") and use_gemini and validate_api_key(st.session_state.api_key):
-                        result, err, model_name = analyze_with_gemini(
-                            tweet_data["screenshot"], st.session_state.api_key
-                        )
+                        result, err, model_name = analyze_with_gemini(tweet_data["screenshot"], st.session_state.api_key)
                         if result:
-                            method = "Gemini (صورة)"
+                            method = "Gemini صورة (" + model_name + ")"
 
-                    # 3️⃣ تحليل ذكي احتياطي
                     if not result:
                         fallback_text = tweet_text if tweet_text else "لا يوجد نص متاح"
                         result = analyze_post_smart(fallback_text)
-                        method = "تحليل ذكي"
+                        method = "تحليل نصي ذكي"
+                        if st.session_state.get('enable_arabic_enhancement', True) and validate_api_key(st.session_state.api_key):
+                            enhanced, emethod, success = enhance_arabic_summary(
+                                result.get("الملخص_التنفيذي", ""),
+                                st.session_state.api_key,
+                                st.session_state.get('sahehly_api_key', '')
+                            )
+                            if success:
+                                result["الملخص_التنفيذي"] = enhanced
+                                result["_enhancement_method"] = emethod
 
-                    # 4️⃣ OCR احتياطي
-                    if not result and tweet_data.get("screenshot"):
-                        ocr_text = extract_text_ocr(tweet_data["screenshot"])
-                        result = analyze_post_smart(ocr_text)
-                        method = "OCR"
-
+                    st.session_state.url_results = result
+                    st.session_state.url_analysis_done = True
+                    st.session_state.analysis_method = method
+                    st.session_state.used_model = model_name
+                    st.session_state.total_analyzed += 1
                     if result:
-                        result["_model"] = model_name or method
-                        result["_method"] = method
-                        st.session_state.url_results = result
-                        st.session_state.url_analysis_done = True
-                        st.session_state.analysis_method = method
-                        st.session_state.used_model = model_name
-                        st.session_state.total_analyzed += 1
                         st.session_state.success_count += 1
-                    else:
-                        st.session_state.fail_count += 1
-                        st.session_state.total_analyzed += 1
                 st.rerun()
             else:
-                st.warning("⚠️ الرجاء إدخال رابط X/Twitter صحيح")
+                st.warning("الرجاء إدخال رابط X/Twitter صحيح")
 
-    # عرض بيانات المنشور المجلوب
     if st.session_state.tweet_data:
         td = st.session_state.tweet_data
-        with st.expander("📄 بيانات المنشور المجلوب", expanded=True):
-            if td.get("text"):
-                st.markdown(f"**النص:** {td['text'][:500]}")
-            if td.get("author"):
-                st.markdown(f"**الكاتب:** {td['author']}")
-            if td.get("error"):
-                st.error(f"خطأ: {td['error']}")
+        st.markdown("#### بيانات المنشور المُجلَب")
+        if td.get("text"):
+            st.text_area("النص", td["text"], height=100, disabled=True)
+        if td.get("author"):
+            st.info("👤 " + td['author'])
+        if td.get("error"):
+            st.warning("⚠️ " + td['error'])
 
-    # عرض النتائج
     if st.session_state.url_analysis_done and st.session_state.url_results:
         st.markdown("---")
+        st.markdown("#### نتائج التحليل | الطريقة: " + st.session_state.analysis_method)
+        emethod = st.session_state.url_results.get('_enhancement_method', '')
+        if emethod:
+            st.markdown('<div style="text-align:right;"><span class="language-badge">✨ ' + emethod + '</span></div>', unsafe_allow_html=True)
         render_all_results(st.session_state.url_results, selected_fields)
-        download_buttons(st.session_state.url_results)
+        download_buttons(st.session_state.url_results, "url_result")
 
-
-# ---- تبويب الدليل ----
+# ==================== دليل الاستخدام ====================
 with tab_guide:
     st.markdown("""
 ### 📖 دليل الاستخدام السريع
 
-#### 🤖 وضع Gemini AI (الأفضل)
-1. احصل على مفتاح مجاني من [Google AI Studio](https://aistudio.google.com/apikey)
-2. أدخله في الشريط الجانبي
-3. اختر التبويب المناسب وابدأ التحليل
+#### 🚀 البدء السريع
+1. احصل على مفتاح Gemini من [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+2. أدخل المفتاح في الشريط الجانبي
+3. ارفع صورة أو أدخل رابط X للتحليل
 
-#### 📝 وضع OCR (بدون مفتاح)
-- يعمل مباشرة بدون أي إعداد
-- دقة أقل في النصوص المعقدة
+#### ✨ ميزة التدقيق اللغوي — جديد في v5.0
+- مفعّلة تلقائياً وتُحسّن الملخص التنفيذي لغوياً
+- Gemini كمدقق: يصحح الإملاء والنحو وعلامات الترقيم
+- صححلي API: إذا كان لديك اشتراك أعمال في sahehly.com أدخل المفتاح للحصول على تدقيق أدق
 
-#### ✨ تحسين اللغة العربية
-- **Gemini مدقق لغوي**: مجاني ويصحح الإملاء والنحو تلقائياً
-- **صححلي API**: دقة أعلى، يتطلب اشتراك أعمال من [sahehly.com](https://sahehly.com)
+#### 📋 تبويب لصق من الحافظة
+- انسخ صورة من X ثم ارفعها
 
-#### 📋 التبويبات
-| التبويب | الاستخدام |
-|---------|-----------|
-| 📋 لصق | انسخ صورة وألصقها |
-| 📤 رفع | ارفع ملف صورة |
-| 🔗 رابط X | حلّل منشوراً من رابطه |
+#### 📤 تبويب رفع صور
+- يدعم PNG, JPG, JPEG, WebP, BMP
+- يمكن رفع صور متعددة دفعة واحدة
 
-#### 💡 نصائح
-- الصور عالية الدقة تعطي نتائج أفضل
-- فعّل "تحسين الملخص لغوياً" للحصول على نص أكثر احترافية
-- يمكن تحليل حتى 20 صورة دفعة واحدة
+#### 🔗 تبويب رابط X
+- أدخل رابط المنشور مباشرة واضغط جلب وتحليل
+
+#### 💾 تحميل النتائج
+- TXT للمشاركة السريعة
+- JSON للمعالجة البرمجية
     """)
 
-
-# ==================== الفوتر ====================
+# ==================== التذييل ====================
 st.markdown("""
 <div class="footer">
     📸 تحليل الصور في نقاط — الإصدار 5.0<br>
-    ✨ مع تحسين اللغة العربية بالذكاء الاصطناعي<br>
-    🔗 <a href="https://aistudio.google.com/apikey" style="color:#63b3ed;">احصل على مفتاح Gemini مجاناً</a>
+    مدعوم بـ Gemini AI + تدقيق لغوي ذكي<br>
+    <a href="https://aistudio.google.com/apikey" style="color:#58a6ff;">احصل على مفتاح Gemini</a>
     &nbsp;|&nbsp;
-    🔗 <a href="https://sahehly.com" style="color:#63b3ed;">صححلي للتدقيق اللغوي</a>
+    <a href="https://sahehly.com" style="color:#58a6ff;">صححلي للتدقيق اللغوي</a>
 </div>
 """, unsafe_allow_html=True)
-```
-
----
-
-## requirements.txt
-
-```
-streamlit
-Pillow
-numpy
-opencv-python-headless
-pytesseract
-google-generativeai
-requests
-beautifulsoup4
-```
-
----
-
-## packages.txt
-
-```
-tesseract-ocr
-tesseract-ocr-ara
-tesseract-ocr-eng
-```
-
----
-
-## .streamlit/config.toml
-
-```toml
-[server]
-headless = true
-enableCORS = false
-enableXsrfProtection = false
-```
