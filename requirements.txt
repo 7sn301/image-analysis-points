@@ -4,5 +4,9 @@ opencv-python-headless
 numpy
 Pillow
 google-generativeai
+requests
+beautifulsoup4
+streamlit-paste-button
+
 
 
