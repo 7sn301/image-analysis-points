@@ -6,6 +6,8 @@ pytesseract
 google-generativeai
 requests
 beautifulsoup4
+yt-dlp
+
 
 
 
