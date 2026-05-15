@@ -1,17 +1,6 @@
 # -*- coding: utf-8 -*-
-"""
-image_analysis_points.py
-وحدة مساعدة لتعريف نقاط تحليل الصور وبناء Prompt موحد لتحليل الصور
-ضمن تطبيق Streamlit لتحليل منشورات X (تويتر) - الإصدار 7.0
-"""
-
 from typing import List, Dict, Any, Optional
 import json
-
-
-# ============================================================
-# نقاط التحليل الأساسية للصور
-# ============================================================
 
 IMAGE_ANALYSIS_POINTS: List[Dict[str, Any]] = [
     {
@@ -89,11 +78,6 @@ IMAGE_ANALYSIS_POINTS: List[Dict[str, Any]] = [
     }
 ]
 
-
-# ============================================================
-# مخطط JSON المطلوب من التحليل
-# ============================================================
-
 IMAGE_ANALYSIS_SCHEMA: Dict[str, Any] = {
     "ملخص_تنفيذي": "خلاصة مركزة عن الصورة ورسالتها العامة",
     "وصف_بصري_عام": {
@@ -130,51 +114,30 @@ IMAGE_ANALYSIS_SCHEMA: Dict[str, Any] = {
     "كلمات_مفتاحية": ["كلمة 1", "كلمة 2"]
 }
 
-
-# ============================================================
-# دوال مساعدة
-# ============================================================
-
 def get_image_analysis_points() -> List[Dict[str, Any]]:
-    """إرجاع جميع نقاط تحليل الصور."""
     return IMAGE_ANALYSIS_POINTS
 
-
 def get_image_analysis_schema() -> Dict[str, Any]:
-    """إرجاع مخطط JSON القياسي المطلوب من نموذج التحليل."""
     return IMAGE_ANALYSIS_SCHEMA
 
-
 def flatten_analysis_points(points: Optional[List[Dict[str, Any]]] = None) -> List[str]:
-    """
-    تحويل نقاط التحليل من بنية أقسام إلى قائمة خطية.
-    """
     source = points if points is not None else IMAGE_ANALYSIS_POINTS
     flat_points: List[str] = []
-
     for section in source:
         section_name = section.get("section", "قسم غير معروف")
         for point in section.get("points", []):
             flat_points.append(f"{section_name}: {point}")
-
     return flat_points
 
-
 def format_analysis_points_for_prompt(points: Optional[List[Dict[str, Any]]] = None) -> str:
-    """
-    تنسيق نقاط التحليل بشكل مناسب داخل Prompt.
-    """
     source = points if points is not None else IMAGE_ANALYSIS_POINTS
     blocks: List[str] = []
-
     for section in source:
         section_name = section.get("section", "قسم غير معروف")
         section_points = section.get("points", [])
         bullets = "\n".join([f"- {p}" for p in section_points])
         blocks.append(f"### {section_name}\n{bullets}")
-
     return "\n\n".join(blocks)
-
 
 def build_image_analysis_prompt(
     post_text: str = "",
@@ -183,19 +146,6 @@ def build_image_analysis_prompt(
     extra_context: str = "",
     strict_json: bool = True
 ) -> str:
-    """
-    بناء Prompt احترافي لتحليل صورة مرفقة بمنشور أو حساب.
-    
-    Parameters:
-        post_text: نص المنشور المرتبط بالصورة
-        account_name: اسم الحساب
-        account_username: اسم المستخدم
-        extra_context: أي سياق إضافي
-        strict_json: إذا True يطلب من النموذج إرجاع JSON فقط
-    
-    Returns:
-        Prompt نصي جاهز للإرسال إلى نموذج Gemini
-    """
     points_text = format_analysis_points_for_prompt()
     schema_text = json.dumps(IMAGE_ANALYSIS_SCHEMA, ensure_ascii=False, indent=2)
 
@@ -245,29 +195,22 @@ def build_image_analysis_prompt(
 
     return prompt
 
-
 def build_image_summary_prompt(
     short_mode: bool = True,
     post_text: str = "",
     account_username: str = ""
 ) -> str:
-    """
-    بناء Prompt مختصر لتحليل سريع للصورة.
-    """
-    mode_text = "مختصر جدًا" if short_mode else "مفصل"
     context_lines = []
-
     if account_username:
         context_lines.append(f"- الحساب: @{account_username}")
     if post_text:
         context_lines.append(f"- نص المنشور: {post_text}")
-
     context_text = "\n".join(context_lines) if context_lines else "- لا يوجد سياق إضافي"
 
     return f"""
 أنت محلل صور ومحتوى استخباراتي.
 
-حلل الصورة المرفقة تحليلًا {mode_text} باللغة العربية.
+حلل الصورة المرفقة تحليلًا مختصرًا باللغة العربية.
 
 ### السياق
 {context_text}
@@ -283,11 +226,7 @@ def build_image_summary_prompt(
 أعد النتيجة بصيغة JSON فقط.
 """.strip()
 
-
 def get_high_priority_indicators() -> List[str]:
-    """
-    إرجاع المؤشرات ذات الأولوية العالية أثناء تحليل الصور.
-    """
     return [
         "وجود سلاح أو معدات أمنية أو عسكرية",
         "ظهور رموز تنظيمية أو شعارات حساسة",
@@ -301,11 +240,7 @@ def get_high_priority_indicators() -> List[str]:
         "إشارات زمنية أو مكانية قابلة للتحقق"
     ]
 
-
 def build_image_analysis_checklist() -> Dict[str, List[str]]:
-    """
-    قائمة مراجعة مختصرة يمكن استخدامها داخل الواجهة أو أثناء الفحص اليدوي.
-    """
     return {
         "فحص بصري": [
             "ما الذي يظهر في الصورة؟",
@@ -328,21 +263,3 @@ def build_image_analysis_checklist() -> Dict[str, List[str]]:
             "ما مستوى الثقة العام؟"
         ]
     }
-
-
-# ============================================================
-# مثال استخدام
-# ============================================================
-
-if __name__ == "__main__":
-    prompt = build_image_analysis_prompt(
-        post_text="صورة مرفقة مع منشور يتحدث عن فعالية ميدانية.",
-        account_name="حساب تجريبي",
-        account_username="demo_account",
-        extra_context="يراد تحليل الصورة من منظور استخباراتي وإعلامي."
-    )
-
-    print("=== IMAGE ANALYSIS PROMPT ===")
-    print(prompt)
-    print("\n=== HIGH PRIORITY INDICATORS ===")
-    print(json.dumps(get_high_priority_indicators(), ensure_ascii=False, indent=2))
