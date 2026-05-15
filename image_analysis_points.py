@@ -1,6 +1,6 @@
 # ============================================================
 # المشهد التنفيذي - Executive Scene Analyzer
-# النسخة: v6.3 | تاريخ التحديث: 2026-05
+# النسخة: v6.4 | تحسينات الواجهة + دعم الوضع الليلي/النهاري
 # ============================================================
 
 import os
@@ -52,7 +52,7 @@ except ImportError:
 
 # ════════════════════════════════════════════════════════════
 APP_NAME    = "المشهد التنفيذي"
-APP_VERSION = "6.3"
+APP_VERSION = "6.4"
 APP_EMOJI   = "🎯"
 
 GEMINI_MODELS = [
@@ -246,7 +246,7 @@ def fetch_tweet_with_media(url: str, api_key: str, status_fn=None) -> Dict:
             tweet_data.update(nitter)
             if status_fn: status_fn("✅ Nitter: تم جلب البيانات")
         else:
-            if status_fn: status_fn("⚠️ Nitter فشل – جميع المرايا غير متاحة")
+            if status_fn: status_fn("⚠️ Nitter فشل")
 
     if not tweet_data["images"] and not tweet_data.get("video_path"):
         if status_fn: status_fn("📡 الطبقة 3: yt-dlp للوسائط...")
@@ -291,7 +291,6 @@ def ocr_image_gemini(image_path_or_url: str, api_key: str, status_fn=None) -> st
     except Exception as e:
         return f"[Gemini OCR Error: {e}]"
 
-# ════════════════════════════════════════════════════════════
 def transcribe_video_gemini(video_path: str, api_key: str, status_fn=None) -> str:
     if not GEMINI_AVAILABLE or not api_key or not os.path.exists(video_path):
         return ""
@@ -311,7 +310,6 @@ def transcribe_video_gemini(video_path: str, api_key: str, status_fn=None) -> st
     except Exception as e:
         return f"[Video Error: {e}]"
 
-# ════════════════════════════════════════════════════════════
 def improve_arabic_text(text: str, api_key: str, status_fn=None) -> str:
     if not text.strip() or not api_key:
         return text
@@ -337,9 +335,9 @@ def build_analysis_prompt(tweet_data: Dict, mode: str) -> str:
         "security":  "ركز على المخاطر الامنية والتحريض والمعلومات المضللة.",
         "general":   "قدم تحليلا شاملا ومتوازنا.",
     }
-    focus   = focus_map.get(mode, focus_map["general"])
-    rt_note = "هذا اعادة نشر" if is_retweet else ""
-    text_content = text if text else "(لا يوجد نص)"
+    focus    = focus_map.get(mode, focus_map["general"])
+    rt_note  = "هذا اعادة نشر" if is_retweet else ""
+    txt_body = text if text else "(لا يوجد نص)"
 
     lines = [
         "انت محلل ذكاء اصطناعي متخصص. حلل المنشور التالي من منصة X وقدم ملخصا تنفيذيا احترافيا.",
@@ -349,7 +347,7 @@ def build_analysis_prompt(tweet_data: Dict, mode: str) -> str:
         "معرف المنشور: " + tweet_id,
         "",
         "محتوى المنشور:",
-        text_content,
+        txt_body,
         "",
         "تعليمات: " + focus,
         "",
@@ -384,9 +382,9 @@ def run_analysis(tweet_data: Dict, api_key: str, mode: str, status_fn=None) -> D
 
     if not raw_text:
         default_error["executive_summary"] = (
-            "فشل التحليل - اسباب محتملة:\n"
-            "تجاوز الحصة المجانية (429) - انتظر دقيقة واعد المحاولة\n"
-            "تحقق من مفتاح API على https://aistudio.google.com/apikey"
+            "فشل التحليل - تجاوز الحصة المجانية (429)\n"
+            "انتظر دقيقة واعد المحاولة\n"
+            "او تحقق من مفتاح API على aistudio.google.com/apikey"
         )
         return default_error
 
@@ -412,92 +410,369 @@ def run_analysis(tweet_data: Dict, api_key: str, mode: str, status_fn=None) -> D
         return default_error
 
 # ════════════════════════════════════════════════════════════
+# 🎨  CSS محسّن — دعم الوضع الليلي والنهاري + خط كبير + RTL
+# ════════════════════════════════════════════════════════════
 def inject_css():
-    css = (
-        "<style>"
-        "@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');"
-        "* { font-family: 'Tajawal', Arial, sans-serif !important; }"
-        "html, body, .stApp { direction: rtl; text-align: right; }"
-        ".stApp, .stApp * { color: #1a1a1a !important; }"
-        ".app-title {"
-        "  text-align: center !important;"
-        "  font-size: 2.4rem;"
-        "  font-weight: 900;"
-        "  background: linear-gradient(135deg,#1DA1F2,#0d47a1);"
-        "  -webkit-background-clip: text;"
-        "  -webkit-text-fill-color: transparent;"
-        "  padding: 0.5rem 0;"
-        "}"
-        ".app-subtitle { text-align:center !important; color:#555 !important; font-size:1rem; margin-bottom:1.5rem; }"
-        "[data-testid='stSidebar'], [data-testid='stSidebar'] * {"
-        "  direction:rtl !important; text-align:right !important; color:#1a1a1a !important;"
-        "}"
-        "input, textarea, .stTextInput input, .stTextArea textarea {"
-        "  direction:rtl !important; text-align:right !important;"
-        "  color:#1a1a1a !important; background-color:#ffffff !important;"
-        "  -webkit-text-fill-color:#1a1a1a !important;"
-        "}"
-        "textarea[disabled], textarea:disabled {"
-        "  color:#1a1a1a !important; -webkit-text-fill-color:#1a1a1a !important;"
-        "  background-color:#f8f9fa !important; opacity:1 !important;"
-        "}"
-        ".stTabs [data-baseweb='tab-list'] { justify-content:flex-end; }"
-        ".stTabs [data-baseweb='tab'] { direction:rtl; color:#1a1a1a !important; }"
-        ".result-card {"
-        "  background:#ffffff !important; border-radius:12px;"
-        "  padding:1.2rem 1.5rem; margin:0.8rem 0;"
-        "  border-right:4px solid #1DA1F2; direction:rtl; text-align:right;"
-        "  color:#1a1a1a !important; box-shadow:0 2px 8px rgba(0,0,0,0.08);"
-        "}"
-        ".result-card, .result-card * { color:#1a1a1a !important; }"
-        ".author-badge {"
-        "  display:inline-flex; align-items:center; gap:6px;"
-        "  background:linear-gradient(135deg,#1DA1F2,#0d47a1);"
-        "  padding:6px 14px; border-radius:20px; font-weight:700; font-size:1rem; margin-bottom:0.5rem;"
-        "}"
-        ".author-badge, .author-badge * { color:#ffffff !important; -webkit-text-fill-color:#ffffff !important; }"
-        ".retweet-badge {"
-        "  display:inline-flex; align-items:center; gap:6px;"
-        "  background:#17bf63; padding:4px 12px; border-radius:20px; font-size:0.85rem; margin-right:8px;"
-        "}"
-        ".retweet-badge, .retweet-badge * { color:#ffffff !important; -webkit-text-fill-color:#ffffff !important; }"
-        ".model-badge { font-size:0.75rem; color:#555 !important; background:#eee !important; padding:2px 8px; border-radius:10px; float:left; }"
-        ".point-item {"
-        "  background:#ffffff !important; border-radius:8px; padding:10px 16px; margin:5px 0;"
-        "  border:1px solid #dde3ea; direction:rtl; text-align:right;"
-        "  color:#1a1a1a !important; font-size:0.95rem; line-height:1.6;"
-        "  box-shadow:0 1px 4px rgba(0,0,0,0.05);"
-        "}"
-        ".point-item, .point-item * { color:#1a1a1a !important; -webkit-text-fill-color:#1a1a1a !important; }"
-        ".sentiment-positive { color:#0a8a42 !important; font-weight:700; }"
-        ".sentiment-negative { color:#c0142a !important; font-weight:700; }"
-        ".sentiment-neutral  { color:#4a5568 !important; font-weight:700; }"
-        ".topic-tag {"
-        "  background:#e8f5fd !important; color:#0d47a1 !important;"
-        "  -webkit-text-fill-color:#0d47a1 !important;"
-        "  padding:3px 12px; border-radius:14px; margin:3px; display:inline-block;"
-        "  font-size:0.88rem; font-weight:500; border:1px solid #b3d9f5;"
-        "}"
-        "[data-testid='stAppViewContainer'] *, [data-testid='block-container'] *,"
-        ".element-container *, .stMarkdown *,"
-        "p, span, div, li, label, h1, h2, h3, h4, h5, h6 { color:#1a1a1a !important; }"
-        ".author-badge span, .author-badge *, .retweet-badge span, .retweet-badge * {"
-        "  color:#ffffff !important; -webkit-text-fill-color:#ffffff !important;"
-        "}"
-        ".stProgress > div > div { background:linear-gradient(90deg,#1DA1F2,#0d47a1) !important; }"
-        ".streamlit-expanderHeader, .streamlit-expanderHeader *,"
-        ".streamlit-expanderContent, .streamlit-expanderContent * {"
-        "  color:#1a1a1a !important; direction:rtl !important; text-align:right !important;"
-        "}"
-        ".stAlert p, .stAlert div, .stInfo p, .stSuccess p, .stError p, .stWarning p { color:#1a1a1a !important; }"
-        ".stSelectbox label, .stRadio label, .stCheckbox label, .stCheckbox span {"
-        "  color:#1a1a1a !important; direction:rtl !important;"
-        "}"
-        ".stButton > button { direction:rtl; font-weight:700; border-radius:10px; }"
-        "</style>"
-    )
-    st.markdown(css, unsafe_allow_html=True)
+    css_parts = [
+        "<style>",
 
+        # ── خط Tajawal ──
+        "@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap');",
+
+        # ── متغيرات الألوان: وضع نهاري ──
+        ":root {",
+        "  --bg-main: #f0f4f8;",
+        "  --bg-card: #ffffff;",
+        "  --bg-card2: #f8fafc;",
+        "  --text-primary: #0f172a;",
+        "  --text-secondary: #334155;",
+        "  --text-muted: #64748b;",
+        "  --border-color: #cbd5e1;",
+        "  --accent-blue: #1DA1F2;",
+        "  --accent-dark: #0d47a1;",
+        "  --accent-green: #059669;",
+        "  --accent-red: #dc2626;",
+        "  --accent-orange: #d97706;",
+        "  --shadow: 0 4px 16px rgba(0,0,0,0.10);",
+        "  --shadow-sm: 0 2px 8px rgba(0,0,0,0.07);",
+        "  --sidebar-bg: #1e293b;",
+        "  --sidebar-text: #f1f5f9;",
+        "  --sidebar-muted: #94a3b8;",
+        "  --sidebar-border: #334155;",
+        "  --sidebar-card: #0f172a;",
+        "}",
+
+        # ── متغيرات الألوان: وضع ليلي ──
+        "@media (prefers-color-scheme: dark) { :root {",
+        "  --bg-main: #0f172a;",
+        "  --bg-card: #1e293b;",
+        "  --bg-card2: #0f172a;",
+        "  --text-primary: #f1f5f9;",
+        "  --text-secondary: #cbd5e1;",
+        "  --text-muted: #94a3b8;",
+        "  --border-color: #334155;",
+        "  --shadow: 0 4px 16px rgba(0,0,0,0.40);",
+        "  --shadow-sm: 0 2px 8px rgba(0,0,0,0.30);",
+        "} }",
+
+        # ── أساس ──
+        "*, *::before, *::after { font-family: 'Tajawal', Arial, sans-serif !important; box-sizing: border-box; }",
+        "html, body { direction: rtl !important; text-align: right !important; }",
+
+        # ── تطبيق Streamlit ──
+        ".stApp {",
+        "  background-color: var(--bg-main) !important;",
+        "  direction: rtl !important;",
+        "}",
+
+        # ── ضمان لون النص في كل مكان ──
+        ".stApp p, .stApp span, .stApp div, .stApp label,",
+        ".stApp li, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6 {",
+        "  color: var(--text-primary) !important;",
+        "  -webkit-text-fill-color: var(--text-primary) !important;",
+        "}",
+
+        # ── textarea معطّل ──
+        "textarea, textarea[disabled], textarea:disabled {",
+        "  color: var(--text-primary) !important;",
+        "  -webkit-text-fill-color: var(--text-primary) !important;",
+        "  background-color: var(--bg-card2) !important;",
+        "  opacity: 1 !important;",
+        "  font-size: 1.1rem !important;",
+        "  line-height: 1.8 !important;",
+        "}",
+
+        # ── حقول الإدخال ──
+        "input, .stTextInput input {",
+        "  direction: rtl !important;",
+        "  text-align: right !important;",
+        "  color: var(--text-primary) !important;",
+        "  -webkit-text-fill-color: var(--text-primary) !important;",
+        "  background-color: var(--bg-card) !important;",
+        "  font-size: 1.1rem !important;",
+        "  padding: 10px 16px !important;",
+        "  border-radius: 10px !important;",
+        "  border: 2px solid var(--border-color) !important;",
+        "}",
+
+        # ══ الشريط الجانبي ══════════════════════════════
+        "[data-testid='stSidebar'] {",
+        "  background-color: var(--sidebar-bg) !important;",
+        "  direction: rtl !important;",
+        "  min-width: 320px !important;",
+        "  width: 320px !important;",
+        "}",
+        "[data-testid='stSidebar'] > div { padding: 1.5rem 1.2rem !important; }",
+        "[data-testid='stSidebar'] * {",
+        "  direction: rtl !important;",
+        "  text-align: right !important;",
+        "  color: var(--sidebar-text) !important;",
+        "  -webkit-text-fill-color: var(--sidebar-text) !important;",
+        "}",
+        "[data-testid='stSidebar'] h1, [data-testid='stSidebar'] h2,",
+        "[data-testid='stSidebar'] h3, [data-testid='stSidebar'] h4 {",
+        "  font-size: 1.3rem !important;",
+        "  font-weight: 800 !important;",
+        "  color: #ffffff !important;",
+        "  -webkit-text-fill-color: #ffffff !important;",
+        "  border-bottom: 2px solid var(--sidebar-border);",
+        "  padding-bottom: 8px;",
+        "  margin-bottom: 12px;",
+        "}",
+        "[data-testid='stSidebar'] label, [data-testid='stSidebar'] .stCheckbox span {",
+        "  font-size: 1.1rem !important;",
+        "  font-weight: 600 !important;",
+        "  color: var(--sidebar-text) !important;",
+        "  -webkit-text-fill-color: var(--sidebar-text) !important;",
+        "}",
+        "[data-testid='stSidebar'] input, [data-testid='stSidebar'] .stTextInput input {",
+        "  background-color: var(--sidebar-card) !important;",
+        "  color: #ffffff !important;",
+        "  -webkit-text-fill-color: #ffffff !important;",
+        "  border: 2px solid var(--sidebar-border) !important;",
+        "  font-size: 1.05rem !important;",
+        "  padding: 10px 14px !important;",
+        "  border-radius: 10px !important;",
+        "}",
+        "[data-testid='stSidebar'] .stSelectbox > div > div {",
+        "  background-color: var(--sidebar-card) !important;",
+        "  color: #ffffff !important;",
+        "  font-size: 1.05rem !important;",
+        "  border: 2px solid var(--sidebar-border) !important;",
+        "  border-radius: 10px !important;",
+        "}",
+        "[data-testid='stSidebar'] .stInfo {",
+        "  background-color: rgba(29,161,242,0.15) !important;",
+        "  border-right: 4px solid var(--accent-blue) !important;",
+        "  border-radius: 10px;",
+        "  padding: 12px 16px;",
+        "  font-size: 1.05rem !important;",
+        "}",
+        "[data-testid='stSidebar'] caption {",
+        "  color: var(--sidebar-muted) !important;",
+        "  -webkit-text-fill-color: var(--sidebar-muted) !important;",
+        "  font-size: 0.9rem !important;",
+        "}",
+
+        # ══ عنوان التطبيق ═══════════════════════════════
+        ".app-title {",
+        "  text-align: center !important;",
+        "  font-size: 3rem !important;",
+        "  font-weight: 900 !important;",
+        "  background: linear-gradient(135deg, #1DA1F2, #0d47a1) !important;",
+        "  -webkit-background-clip: text !important;",
+        "  -webkit-text-fill-color: transparent !important;",
+        "  padding: 0.8rem 0 0.3rem 0;",
+        "  letter-spacing: -1px;",
+        "}",
+        ".app-subtitle {",
+        "  text-align: center !important;",
+        "  color: var(--text-muted) !important;",
+        "  -webkit-text-fill-color: var(--text-muted) !important;",
+        "  font-size: 1.15rem !important;",
+        "  margin-bottom: 2rem;",
+        "}",
+
+        # ══ التبويبات ════════════════════════════════════
+        ".stTabs [data-baseweb='tab-list'] { justify-content: flex-end !important; gap: 8px; }",
+        ".stTabs [data-baseweb='tab'] {",
+        "  direction: rtl !important;",
+        "  font-size: 1.1rem !important;",
+        "  font-weight: 700 !important;",
+        "  padding: 10px 20px !important;",
+        "  border-radius: 10px 10px 0 0 !important;",
+        "}",
+
+        # ══ بطاقة صاحب الحساب ════════════════════════════
+        ".account-card {",
+        "  background: linear-gradient(135deg, #1DA1F2 0%, #0d47a1 100%) !important;",
+        "  border-radius: 16px !important;",
+        "  padding: 1.5rem 2rem !important;",
+        "  margin-bottom: 1.5rem !important;",
+        "  direction: rtl !important;",
+        "  text-align: right !important;",
+        "  box-shadow: var(--shadow) !important;",
+        "}",
+        ".account-card * {",
+        "  color: #ffffff !important;",
+        "  -webkit-text-fill-color: #ffffff !important;",
+        "}",
+        ".account-name {",
+        "  font-size: 1.6rem !important;",
+        "  font-weight: 900 !important;",
+        "  margin-bottom: 4px;",
+        "}",
+        ".account-username {",
+        "  font-size: 1.1rem !important;",
+        "  opacity: 0.85;",
+        "}",
+        ".account-model {",
+        "  font-size: 0.9rem !important;",
+        "  opacity: 0.7;",
+        "  margin-top: 6px;",
+        "}",
+        ".retweet-tag {",
+        "  display: inline-block;",
+        "  background: rgba(255,255,255,0.25);",
+        "  padding: 3px 14px;",
+        "  border-radius: 20px;",
+        "  font-size: 1rem !important;",
+        "  font-weight: 700;",
+        "  margin-top: 8px;",
+        "}",
+
+        # ══ بطاقة الملخص التنفيذي ════════════════════════
+        ".summary-card {",
+        "  background: var(--bg-card) !important;",
+        "  border-radius: 16px !important;",
+        "  padding: 1.8rem 2rem !important;",
+        "  margin-bottom: 1.5rem !important;",
+        "  border-right: 6px solid var(--accent-blue) !important;",
+        "  direction: rtl !important;",
+        "  text-align: right !important;",
+        "  box-shadow: var(--shadow) !important;",
+        "}",
+        ".summary-card .section-title {",
+        "  font-size: 1.4rem !important;",
+        "  font-weight: 900 !important;",
+        "  color: var(--accent-blue) !important;",
+        "  -webkit-text-fill-color: var(--accent-blue) !important;",
+        "  margin-bottom: 12px;",
+        "  display: block;",
+        "}",
+        ".summary-card .summary-text {",
+        "  font-size: 1.25rem !important;",
+        "  font-weight: 500 !important;",
+        "  color: var(--text-primary) !important;",
+        "  -webkit-text-fill-color: var(--text-primary) !important;",
+        "  line-height: 2.0 !important;",
+        "}",
+
+        # ══ بطاقة النقاط ══════════════════════════════════
+        ".points-card {",
+        "  background: var(--bg-card) !important;",
+        "  border-radius: 16px !important;",
+        "  padding: 1.5rem 1.8rem !important;",
+        "  margin-bottom: 1.2rem !important;",
+        "  direction: rtl !important;",
+        "  text-align: right !important;",
+        "  box-shadow: var(--shadow-sm) !important;",
+        "  border-top: 4px solid var(--accent-blue);",
+        "}",
+        ".section-title-lg {",
+        "  font-size: 1.35rem !important;",
+        "  font-weight: 900 !important;",
+        "  color: var(--text-primary) !important;",
+        "  -webkit-text-fill-color: var(--text-primary) !important;",
+        "  margin-bottom: 14px;",
+        "  display: block;",
+        "  padding-bottom: 8px;",
+        "  border-bottom: 2px solid var(--border-color);",
+        "}",
+        ".point-row {",
+        "  display: flex;",
+        "  align-items: flex-start;",
+        "  gap: 12px;",
+        "  padding: 12px 0;",
+        "  border-bottom: 1px solid var(--border-color);",
+        "  direction: rtl;",
+        "}",
+        ".point-row:last-child { border-bottom: none; }",
+        ".point-icon { font-size: 1.3rem; flex-shrink: 0; margin-top: 2px; }",
+        ".point-text {",
+        "  font-size: 1.15rem !important;",
+        "  font-weight: 500 !important;",
+        "  color: var(--text-primary) !important;",
+        "  -webkit-text-fill-color: var(--text-primary) !important;",
+        "  line-height: 1.8 !important;",
+        "}",
+
+        # ══ بطاقة المخاطر ══════════════════════════════════
+        ".risks-card {",
+        "  background: var(--bg-card) !important;",
+        "  border-radius: 16px !important;",
+        "  padding: 1.5rem 1.8rem !important;",
+        "  margin-bottom: 1.2rem !important;",
+        "  direction: rtl !important;",
+        "  text-align: right !important;",
+        "  box-shadow: var(--shadow-sm) !important;",
+        "  border-top: 4px solid var(--accent-red);",
+        "}",
+
+        # ══ بطاقة التوصيات ════════════════════════════════
+        ".reco-card {",
+        "  background: var(--bg-card) !important;",
+        "  border-radius: 16px !important;",
+        "  padding: 1.5rem 1.8rem !important;",
+        "  margin-bottom: 1.2rem !important;",
+        "  direction: rtl !important;",
+        "  text-align: right !important;",
+        "  box-shadow: var(--shadow-sm) !important;",
+        "  border-top: 4px solid var(--accent-green);",
+        "}",
+
+        # ══ بطاقة المشاعر والموضوعات ══════════════════════
+        ".meta-card {",
+        "  background: var(--bg-card) !important;",
+        "  border-radius: 16px !important;",
+        "  padding: 1.5rem 1.8rem !important;",
+        "  margin-bottom: 1.2rem !important;",
+        "  direction: rtl !important;",
+        "  text-align: right !important;",
+        "  box-shadow: var(--shadow-sm) !important;",
+        "}",
+        ".sentiment-value {",
+        "  font-size: 1.8rem !important;",
+        "  font-weight: 900 !important;",
+        "  margin-top: 8px;",
+        "}",
+        ".sentiment-pos { color: #059669 !important; -webkit-text-fill-color: #059669 !important; }",
+        ".sentiment-neg { color: #dc2626 !important; -webkit-text-fill-color: #dc2626 !important; }",
+        ".sentiment-neu { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }",
+        ".topic-pill {",
+        "  display: inline-block;",
+        "  background: rgba(29,161,242,0.12) !important;",
+        "  color: var(--accent-dark) !important;",
+        "  -webkit-text-fill-color: var(--accent-dark) !important;",
+        "  border: 1.5px solid rgba(29,161,242,0.35);",
+        "  padding: 6px 16px;",
+        "  border-radius: 20px;",
+        "  font-size: 1.05rem !important;",
+        "  font-weight: 600 !important;",
+        "  margin: 4px 3px;",
+        "}",
+
+        # ══ شريط التقدم ═══════════════════════════════════
+        ".stProgress > div > div { background: linear-gradient(90deg, #1DA1F2, #0d47a1) !important; }",
+
+        # ══ Expander ══════════════════════════════════════
+        ".streamlit-expanderHeader, .streamlit-expanderHeader * {",
+        "  font-size: 1.1rem !important;",
+        "  font-weight: 700 !important;",
+        "  color: var(--text-primary) !important;",
+        "  -webkit-text-fill-color: var(--text-primary) !important;",
+        "  direction: rtl !important;",
+        "  text-align: right !important;",
+        "}",
+
+        # ══ الأزرار ════════════════════════════════════════
+        ".stButton > button {",
+        "  direction: rtl !important;",
+        "  font-size: 1.1rem !important;",
+        "  font-weight: 700 !important;",
+        "  border-radius: 12px !important;",
+        "  padding: 12px 24px !important;",
+        "}",
+
+        # ══ تصحيح Alerts ══════════════════════════════════
+        ".stAlert p, .stAlert div { color: var(--text-primary) !important; }",
+
+        "</style>",
+    ]
+    st.markdown("".join(css_parts), unsafe_allow_html=True)
+
+# ════════════════════════════════════════════════════════════
+# 🖥️  عرض نتائج التحليل — واجهة محسّنة
 # ════════════════════════════════════════════════════════════
 def display_analysis_results(analysis: Dict, tweet_data: Dict):
     author   = tweet_data.get("author", "")
@@ -505,57 +780,115 @@ def display_analysis_results(analysis: Dict, tweet_data: Dict):
     is_rt    = tweet_data.get("is_retweet", False)
     model    = analysis.get("_model_used", "")
 
-    st.markdown("#### 👤 صاحب الحساب")
-    author_html = '<span class="author-badge">🐦 ' + author
-    if username:
-        author_html += " | " + username
-    author_html += "</span>"
-    if is_rt:
-        author_html += ' <span class="retweet-badge">🔁 إعادة نشر</span>'
-    if model:
-        author_html += ' <span class="model-badge">🤖 ' + model + "</span>"
-    st.markdown(author_html, unsafe_allow_html=True)
-    st.markdown("---")
+    # ══ 1. بطاقة صاحب الحساب ════════════════════════════
+    rt_tag   = '<span class="retweet-tag">🔁 إعادة نشر</span>' if is_rt else ""
+    mdl_line = '<div class="account-model">🤖 نموذج: ' + model + "</div>" if model else ""
 
-    st.markdown("#### 📋 الملخص التنفيذي")
     st.markdown(
-        '<div class="result-card">' + analysis.get("executive_summary", "—") + "</div>",
+        '<div class="account-card">'
+        '  <div style="font-size:2rem;margin-bottom:6px;">👤</div>'
+        '  <div class="account-name">🐦 ' + author + "</div>"
+        + ('<div class="account-username">' + username + "</div>" if username else "")
+        + rt_tag
+        + mdl_line
+        + "</div>",
         unsafe_allow_html=True
     )
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### 🎯 النقاط الرئيسية")
-        for pt in analysis.get("key_points", []):
-            st.markdown('<div class="point-item">• ' + pt + "</div>", unsafe_allow_html=True)
-    with col2:
-        st.markdown("#### ⚠️ المخاطر والتوصيات")
-        for r in analysis.get("risks", []):
-            st.markdown(
-                '<div class="point-item" style="border-right:4px solid #e0245e;">🔴 ' + r + "</div>",
-                unsafe_allow_html=True
-            )
-        for rec in analysis.get("recommendations", []):
-            st.markdown(
-                '<div class="point-item" style="border-right:4px solid #17bf63;">✅ ' + rec + "</div>",
-                unsafe_allow_html=True
-            )
+    # ══ 2. الملخص التنفيذي ══════════════════════════════
+    st.markdown(
+        '<div class="summary-card">'
+        '<span class="section-title">📋 الملخص التنفيذي</span>'
+        '<div class="summary-text">' + analysis.get("executive_summary", "—") + "</div>"
+        "</div>",
+        unsafe_allow_html=True
+    )
 
+    # ══ 3. النقاط الرئيسية ═══════════════════════════════
+    kp_rows = "".join(
+        '<div class="point-row">'
+        '<span class="point-icon">🔹</span>'
+        '<span class="point-text">' + pt + "</span>"
+        "</div>"
+        for pt in analysis.get("key_points", [])
+    )
+    st.markdown(
+        '<div class="points-card">'
+        '<span class="section-title-lg">🎯 النقاط الرئيسية</span>'
+        + kp_rows +
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+    # ══ 4. المخاطر + التوصيات ════════════════════════════
+    col1, col2 = st.columns(2)
+
+    with col1:
+        risk_rows = "".join(
+            '<div class="point-row">'
+            '<span class="point-icon">🔴</span>'
+            '<span class="point-text">' + r + "</span>"
+            "</div>"
+            for r in analysis.get("risks", [])
+        )
+        st.markdown(
+            '<div class="risks-card">'
+            '<span class="section-title-lg">⚠️ المخاطر</span>'
+            + risk_rows +
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+    with col2:
+        rec_rows = "".join(
+            '<div class="point-row">'
+            '<span class="point-icon">✅</span>'
+            '<span class="point-text">' + rec + "</span>"
+            "</div>"
+            for rec in analysis.get("recommendations", [])
+        )
+        st.markdown(
+            '<div class="reco-card">'
+            '<span class="section-title-lg">💡 التوصيات</span>'
+            + rec_rows +
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+    # ══ 5. المشاعر + الموضوعات ════════════════════════════
     col3, col4 = st.columns(2)
+
     sentiment = analysis.get("sentiment", "محايد")
     sent_cls  = (
-        "sentiment-positive" if "ايجاب" in sentiment or "إيجاب" in sentiment
-        else "sentiment-negative" if "سلب" in sentiment
-        else "sentiment-neutral"
+        "sentiment-pos" if "ايجاب" in sentiment or "إيجاب" in sentiment
+        else "sentiment-neg" if "سلب" in sentiment
+        else "sentiment-neu"
     )
-    with col3:
-        st.markdown("#### 💡 المشاعر العامة")
-        st.markdown('<p class="' + sent_cls + '" style="font-size:1.4rem">' + sentiment + "</p>", unsafe_allow_html=True)
-    with col4:
-        st.markdown("#### 🏷️ الموضوعات")
-        for topic in analysis.get("topics", []):
-            st.markdown('<span class="topic-tag">' + topic + "</span>", unsafe_allow_html=True)
 
+    with col3:
+        st.markdown(
+            '<div class="meta-card">'
+            '<span class="section-title-lg">💬 المشاعر العامة</span>'
+            '<div class="sentiment-value ' + sent_cls + '">' + sentiment + "</div>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+    with col4:
+        topics_html = "".join(
+            '<span class="topic-pill">' + t + "</span>"
+            for t in analysis.get("topics", [])
+        )
+        st.markdown(
+            '<div class="meta-card">'
+            '<span class="section-title-lg">🏷️ الموضوعات</span>'
+            '<div style="margin-top:10px;">' + topics_html + "</div>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+# ════════════════════════════════════════════════════════════
+# 🚀  الدالة الرئيسية
 # ════════════════════════════════════════════════════════════
 def main():
     st.set_page_config(
@@ -566,8 +899,14 @@ def main():
     )
     inject_css()
 
-    st.markdown('<h1 class="app-title">' + APP_EMOJI + " " + APP_NAME + "</h1>", unsafe_allow_html=True)
-    st.markdown('<p class="app-subtitle">تحليل منشورات X وتويتر بالذكاء الاصطناعي | v' + APP_VERSION + "</p>", unsafe_allow_html=True)
+    st.markdown(
+        '<h1 class="app-title">' + APP_EMOJI + " " + APP_NAME + "</h1>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<p class="app-subtitle">تحليل منشورات X وتويتر بالذكاء الاصطناعي | v' + APP_VERSION + "</p>",
+        unsafe_allow_html=True
+    )
 
     # ════ الشريط الجانبي ════
     with st.sidebar:
@@ -590,24 +929,28 @@ def main():
             }.get(x, x)
         )
         st.markdown("---")
-        enable_ocr   = st.checkbox("🖼️ تحليل الصور (OCR)", value=True)
-        enable_video = st.checkbox("🎬 تحليل الفيديو",     value=False)
-        improve_text = st.checkbox("✨ تحسين النص العربي", value=False)
+        enable_ocr   = st.checkbox("🖼️ تحليل الصور (OCR)",  value=True)
+        enable_video = st.checkbox("🎬 تحليل الفيديو",       value=False)
+        improve_text = st.checkbox("✨ تحسين النص العربي",   value=False)
         st.markdown("---")
         st.markdown("#### 📊 حدود الاستخدام المجاني")
         st.info(
-            "gemini-1.5-flash (الافضل)\n"
+            "🥇 gemini-1.5-flash\n"
             "15 طلب/دقيقة | 1,500 طلب/يوم\n\n"
-            "gemini-2.5-flash\n"
+            "⚡ gemini-2.5-flash\n"
             "10 طلبات/دقيقة | 250 طلب/يوم"
         )
         st.markdown("---")
         st.caption("v" + APP_VERSION + " | oEmbed + Nitter + yt-dlp")
 
     # ════ التبويبات ════
-    tab_link, tab_img, tab_guide = st.tabs(["🔗 تحليل رابط", "🖼️ تحليل صورة", "📖 دليل الاستخدام"])
+    tab_link, tab_img, tab_guide = st.tabs([
+        "🔗 تحليل رابط",
+        "🖼️ تحليل صورة",
+        "📖 دليل الاستخدام"
+    ])
 
-    # ── تبويب 1: تحليل رابط ──
+    # ── تبويب 1 ──
     with tab_link:
         st.markdown("### 🔗 أدخل رابط منشور X")
         tweet_url_input = st.text_input(
@@ -619,7 +962,7 @@ def main():
             if is_tweet_url(tweet_url_input):
                 tid   = extract_tweet_id(tweet_url_input)
                 uname = extract_username_from_url(tweet_url_input)
-                st.success("✅ رابط صالح | الحساب: " + uname + " | معرّف المنشور: " + str(tid))
+                st.success("✅ رابط صالح | الحساب: " + uname + " | المعرّف: " + str(tid))
             else:
                 st.error("❌ الرابط غير مدعوم – أدخل رابط x.com أو twitter.com")
 
@@ -634,9 +977,9 @@ def main():
                 status_box = st.empty()
                 progress   = st.progress(0)
                 log_exp    = st.expander("📋 سجل التنفيذ", expanded=False)
-                log_lines  = []
+                log_lines: List[str] = []
 
-                def upd(msg):
+                def upd(msg: str):
                     status_box.info("⏳ " + msg)
                     log_lines.append(msg)
                     with log_exp:
@@ -652,7 +995,7 @@ def main():
                     tweet_data["text"] = improve_arabic_text(tweet_data["text"], api_key, upd)
                 progress.progress(55)
 
-                ocr_texts = []
+                ocr_texts: List[str] = []
                 if enable_ocr and tweet_data.get("images"):
                     upd("تحليل " + str(len(tweet_data["images"])) + " صورة...")
                     for img in tweet_data["images"][:3]:
@@ -682,16 +1025,16 @@ def main():
                 display_analysis_results(analysis, tweet_data)
 
                 with st.expander("📝 النص الكامل للمنشور", expanded=False):
-                    st.text_area("", value=tweet_data.get("text", "(فارغ)"), height=150, disabled=True)
+                    st.text_area("", value=tweet_data.get("text", "(فارغ)"), height=200, disabled=True)
 
                 if ocr_texts:
                     with st.expander("🖼️ النصوص المستخرجة من الصور"):
                         for i, t in enumerate(ocr_texts, 1):
-                            st.text_area("صورة " + str(i), value=t, height=80, disabled=True)
+                            st.text_area("صورة " + str(i), value=t, height=100, disabled=True)
 
                 if video_transcript:
                     with st.expander("🎬 تفريغ الفيديو"):
-                        st.text_area("", value=video_transcript, height=100, disabled=True)
+                        st.text_area("", value=video_transcript, height=120, disabled=True)
 
                 export = {
                     "tweet_url":  tweet_url_input,
@@ -707,7 +1050,7 @@ def main():
                     mime="application/json"
                 )
 
-    # ── تبويب 2: تحليل صورة ──
+    # ── تبويب 2 ──
     with tab_img:
         st.markdown("### 🖼️ رفع صورة للتحليل المباشر")
         uploaded = st.file_uploader("ارفع صورة", type=["jpg", "jpeg", "png", "webp", "gif"])
@@ -736,26 +1079,22 @@ def main():
                     else:
                         st.error("❌ فشل التحليل – انتظر دقيقة وأعد المحاولة")
 
-    # ── تبويب 3: دليل الاستخدام ──
+    # ── تبويب 3 ──
     with tab_guide:
         st.markdown("### 📖 دليل الاستخدام")
-
         st.markdown("#### 🚀 البدء السريع")
         st.markdown(
             "1. احصل على مفتاح Gemini مجاني من [Google AI Studio](https://aistudio.google.com/apikey)  \n"
             "2. أدخل المفتاح في الشريط الجانبي  \n"
             "3. الصق رابط المنشور واضغط **تحليل**"
         )
-
         st.markdown("#### ✅ الروابط المدعومة")
         st.code(
             "https://x.com/user/status/123456789\n"
             "https://x.com/user/status/123456789?s=20\n"
-            "https://twitter.com/user/status/123456789\n"
-            "https://www.twitter.com/user/status/123456789",
+            "https://twitter.com/user/status/123456789",
             language=None
         )
-
         st.markdown("#### ⚠️ حل مشكلة 429")
         st.table({
             "الحل":  ["انتظر دقيقة", "مفتاح جديد", "فعّل الفوترة"],
@@ -765,7 +1104,6 @@ def main():
                 "يرفع الحد إلى 1000 طلب/دقيقة"
             ]
         })
-
         st.markdown("#### 🤖 النماذج المتاحة 2025-2026")
         st.table({
             "النموذج":    ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-2.5-flash", "gemini-2.5-pro"],
