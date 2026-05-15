@@ -1,7 +1,7 @@
-# ============================================================
+# ═══════════════════════════════════════════════════════════════
 # المشهد التنفيذي - Executive Scene Analyzer
-# النسخة: v6.6 | استخراج بيانات الحساب التفصيلية
-# ============================================================
+# الإصدار: 6.7 | تحليل منشورات X بالذكاء الاصطناعي
+# ═══════════════════════════════════════════════════════════════
 
 import os
 import re
@@ -16,9 +16,10 @@ import shutil
 import requests
 import streamlit as st
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict
-from urllib.parse import urlparse, quote_plus
+from typing import Optional, Dict, List, Tuple
+from urllib.parse import urlparse, urlencode, quote
 
+# ── مكتبات اختيارية ──
 try:
     from PIL import Image
     PIL_AVAILABLE = True
@@ -40,9 +41,9 @@ except ImportError:
 
 try:
     import google.generativeai as genai
-    GEMINI_AVAILABLE = True
+    GENAI_AVAILABLE = True
 except ImportError:
-    GEMINI_AVAILABLE = False
+    GENAI_AVAILABLE = False
 
 try:
     from bs4 import BeautifulSoup
@@ -50,401 +51,46 @@ try:
 except ImportError:
     BS4_AVAILABLE = False
 
-# ════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# الإعدادات العامة
+# ═══════════════════════════════════════════════════════════════
 APP_NAME    = "المشهد التنفيذي"
-APP_VERSION = "6.6"
+APP_VERSION = "6.7"
 APP_EMOJI   = "🎯"
 
 GEMINI_MODELS = [
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
+    {"name": "gemini-1.5-flash",      "rpm": 15,  "rpd": 1500},
+    {"name": "gemini-1.5-flash-8b",   "rpm": 15,  "rpd": 1500},
+    {"name": "gemini-2.5-flash",      "rpm": 10,  "rpd": 250},
+    {"name": "gemini-2.5-flash-lite", "rpm": 10,  "rpd": 250},
+    {"name": "gemini-2.5-pro",        "rpm": 5,   "rpd": 100},
 ]
 
 OCR_LANG      = "ara+eng"
 REQUEST_DELAY = 2
 MAX_RETRIES   = 3
 
-TWEET_URL_PATTERN = re.compile(
-    r"https?://(www\.)?(twitter\.com|x\.com)/[^/]+/status/\d+",
+TWEET_URL_PATTERN   = re.compile(
+    r"https?://(www\.)?(twitter\.com|x\.com)/\w+/status/\d+",
     re.IGNORECASE
 )
 PROFILE_URL_PATTERN = re.compile(
-    r"https?://(www\.)?(twitter\.com|x\.com)/([^/?\s]+)/?$",
+    r"https?://(www\.)?(twitter\.com|x\.com)/(?!search|hashtag|i/)(\w+)/?$",
     re.IGNORECASE
 )
 
 ACCOUNT_CATEGORIES = {
-    "معادي":        {"icon": "🔴", "color": "#dc2626", "desc": "محتوى معادٍ أو مثير للفتنة"},
-    "مشبوه":        {"icon": "🟠", "color": "#d97706", "desc": "أنماط مشبوهة تستوجب المراقبة"},
-    "محايد":        {"icon": "🟡", "color": "#ca8a04", "desc": "محتوى عام بدون توجه واضح"},
-    "مواطن":        {"icon": "🟢", "color": "#059669", "desc": "مواطن عادي يتفاعل بشكل طبيعي"},
-    "داعم":         {"icon": "💙", "color": "#1DA1F2", "desc": "داعم للقيادة والتوجهات الوطنية"},
-    "إعلامي":       {"icon": "📰", "color": "#7c3aed", "desc": "حساب إعلامي أو صحفي"},
-    "مستنجد":       {"icon": "🆘", "color": "#0891b2", "desc": "يطلب المساعدة أو يشكو"},
-    "ساخر":         {"icon": "😏", "color": "#be185d", "desc": "أسلوب تهكمي على المسؤولين"},
-    "متدخل خارجي": {"icon": "⚠️", "color": "#7f1d1d", "desc": "تدخل في الشأن الداخلي السعودي"},
+    "معادي":          {"icon": "🔴", "color": "#dc2626", "desc": "يعبّر عن معارضة صريحة أو عدائية"},
+    "مشبوه":          {"icon": "🟠", "color": "#ea580c", "desc": "سلوك مثير للريبة أو غير طبيعي"},
+    "محايد":          {"icon": "⚪", "color": "#6b7280", "desc": "لا يُظهر انحيازاً واضحاً"},
+    "مواطن":          {"icon": "🟢", "color": "#16a34a", "desc": "مواطن عادي يتفاعل بشكل طبيعي"},
+    "داعم":           {"icon": "💙", "color": "#2563eb", "desc": "يُبدي دعماً للمواقف الرسمية"},
+    "إعلامي":         {"icon": "📰", "color": "#7c3aed", "desc": "صحفي أو وسيلة إعلامية"},
+    "مستنجد":         {"icon": "🆘", "color": "#0891b2", "desc": "يطلب المساعدة أو يتقدم بشكاوى"},
+    "ساخر":           {"icon": "😏", "color": "#b45309", "desc": "يستخدم السخرية والتهكم"},
+    "متدخل خارجي":   {"icon": "🌐", "color": "#be185d", "desc": "حساب خارجي يتدخل في الشأن الداخلي"},
 }
 
-# ════════════════════════════════════════════════════════════
-def is_tweet_url(url: str) -> bool:
-    return bool(TWEET_URL_PATTERN.match(url.strip()))
-
-def is_profile_url(url: str) -> bool:
-    u = url.strip().rstrip("/")
-    if TWEET_URL_PATTERN.match(u):
-        return False
-    return bool(PROFILE_URL_PATTERN.match(u))
-
-def extract_tweet_id(url: str) -> Optional[str]:
-    m = re.search(r"/status/(\d+)", url)
-    return m.group(1) if m else None
-
-def extract_username_from_url(url: str) -> str:
-    m = re.search(r"(?:twitter\.com|x\.com)/([^/?\s]+?)(?:/|$|\?)", url, re.IGNORECASE)
-    if m:
-        uname = m.group(1)
-        if uname.lower() not in ("status", "i", "home", "explore", "notifications"):
-            return f"@{uname}"
-    return ""
-
-def normalize_tweet_url(url: str) -> str:
-    url = re.sub(r"\?.*$", "", url.strip())
-    url = re.sub(r"https?://(www\.)?x\.com/", "https://twitter.com/", url)
-    return url
-
-# ════════════════════════════════════════════════════════════
-def exponential_backoff(attempt: int, base: float = 2.0, cap: float = 60.0) -> float:
-    return min(base ** attempt + random.uniform(0, 1), cap)
-
-def call_gemini_with_retry(model_name: str, prompt, status_fn=None) -> Optional[str]:
-    if not GEMINI_AVAILABLE:
-        return None
-    for attempt in range(MAX_RETRIES):
-        try:
-            model  = genai.GenerativeModel(model_name)
-            result = model.generate_content(prompt)
-            return result.text
-        except Exception as e:
-            err = str(e).lower()
-            if "429" in err or "quota" in err or "resource_exhausted" in err:
-                wait = exponential_backoff(attempt)
-                if status_fn:
-                    status_fn(f"⏳ {model_name}: حد الطلبات – انتظر {wait:.0f}ث (محاولة {attempt+1}/{MAX_RETRIES})")
-                time.sleep(wait)
-                continue
-            elif "404" in err or "not found" in err or "deprecated" in err:
-                if status_fn:
-                    status_fn(f"⚠️ {model_name}: غير متاح – جرّب التالي")
-                return None
-            else:
-                if status_fn:
-                    status_fn(f"❌ {model_name}: {str(e)[:80]}")
-                return None
-    if status_fn:
-        status_fn(f"🚫 {model_name}: استُنفدت {MAX_RETRIES} محاولات")
-    return None
-
-def gemini_generate(prompt, api_key: str, status_fn=None) -> Tuple[Optional[str], Optional[str]]:
-    if not GEMINI_AVAILABLE or not api_key:
-        return None, None
-    genai.configure(api_key=api_key)
-    for model_name in GEMINI_MODELS:
-        if status_fn:
-            status_fn(f"🤖 جارٍ المحاولة: {model_name}")
-        result = call_gemini_with_retry(model_name, prompt, status_fn)
-        if result:
-            return result, model_name
-        time.sleep(REQUEST_DELAY)
-    return None, None
-
-# ════════════════════════════════════════════════════════════
-# 🔍  استخراج بيانات الحساب التفصيلية — الجديد v6.6
-# ════════════════════════════════════════════════════════════
-
-def detect_vpn_indicators(profile_data: Dict) -> Dict:
-    """
-    يكشف مؤشرات استخدام VPN أو البروكسي بناءً على:
-    - التناقض بين الموقع المُعلن والدولة المتصل منها
-    - استخدام متصفحات/تطبيقات مرتبطة بـ VPN
-    - تغيير مستمر في موقع النشر
-    """
-    indicators = []
-    risk_level = "منخفض"
-    score = 0
-
-    location  = (profile_data.get("location") or "").lower()
-    connected = (profile_data.get("connected_via") or "").lower()
-    country   = (profile_data.get("country") or "").lower()
-
-    # مؤشر 1: التطبيق المتصل به
-    vpn_apps = ["vpn", "proxy", "tor", "onion", "nord", "express", "proton"]
-    for app in vpn_apps:
-        if app in connected:
-            indicators.append("يستخدم تطبيقاً مرتبطاً بـ VPN: " + connected)
-            score += 4
-            break
-
-    # مؤشر 2: تناقض الموقع والدولة
-    arabic_countries = ["saudi", "uae", "egypt", "jordan", "iraq", "syria", "kuwait", "qatar",
-                        "السعودية", "الامارات", "مصر", "الاردن", "العراق", "سوريا", "الكويت"]
-    non_arabic_countries = ["united kingdom", "uk", "usa", "united states", "germany",
-                            "france", "netherlands", "sweden", "canada", "australia"]
-
-    location_is_arabic = any(c in location for c in arabic_countries)
-    country_is_non_arabic = any(c in country for c in non_arabic_countries)
-    connected_is_non_arabic = any(c in connected for c in non_arabic_countries)
-
-    if location_is_arabic and (country_is_non_arabic or connected_is_non_arabic):
-        indicators.append("تناقض: الموقع المُعلن عربي لكن الاتصال من دولة غربية")
-        score += 5
-
-    # مؤشر 3: دولة الاتصال (UK/US شائعة للـ VPN)
-    if "united kingdom" in connected or "uk" in connected:
-        indicators.append("الاتصال من المملكة المتحدة (شائع في VPN)")
-        score += 2
-
-    if "netherlands" in connected or "هولندا" in connected:
-        indicators.append("الاتصال من هولندا (مركز خوادم VPN)")
-        score += 3
-
-    # تحديد مستوى الخطر
-    if score >= 6:
-        risk_level = "عالي"
-    elif score >= 3:
-        risk_level = "متوسط"
-    else:
-        risk_level = "منخفض"
-
-    return {
-        "vpn_indicators": indicators,
-        "vpn_risk_level": risk_level,
-        "vpn_score": score,
-        "likely_using_vpn": score >= 3,
-    }
-
-def fetch_account_details_nitter(username: str) -> Dict:
-    """
-    استخراج بيانات الحساب التفصيلية:
-    - الاسم المعروض
-    - المعرف (@handle)
-    - الـ User ID الرقمي
-    - الدولة / الموقع
-    - تاريخ الانضمام
-    - التحقق (verified)
-    - التطبيق المتصل به (connected via)
-    - موثّق منذ
-    - عدد المتابعين / المتابَعين
-    - عدد المنشورات
-    - مؤشرات VPN
-    """
-    result = {
-        "display_name":   "",
-        "username":       username,
-        "user_id":        "",
-        "bio":            "",
-        "location":       "",
-        "country":        "",
-        "joined_date":    "",
-        "verified":       False,
-        "verified_since": "",
-        "connected_via":  "",
-        "followers":      "",
-        "following":      "",
-        "tweets_count":   "",
-        "website":        "",
-        "profile_image":  "",
-        "recent_tweets":  [],
-        "pinned_tweet":   "",
-        "is_private":     False,
-        "error":          "",
-        # مؤشرات VPN
-        "vpn_info":       {},
-    }
-
-    clean_username = username.lstrip("@")
-
-    for mirror in NITTER_MIRRORS:
-        try:
-            url  = f"{mirror}/{clean_username}"
-            resp = requests.get(url, timeout=12,
-                                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-            if resp.status_code == 404:
-                result["error"] = "الحساب غير موجود"
-                return result
-            if resp.status_code != 200:
-                continue
-
-            if not BS4_AVAILABLE:
-                result["error"] = "BeautifulSoup غير متوفر"
-                continue
-
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            # ── الاسم المعروض ──────────────────────────────
-            name_el = soup.find("a", class_="profile-card-fullname")
-            if not name_el:
-                name_el = soup.find("div", class_="profile-card-fullname")
-            if name_el:
-                result["display_name"] = name_el.get_text(strip=True)
-
-            # ── السيرة الذاتية ─────────────────────────────
-            bio_el = soup.find("div", class_="profile-bio")
-            if bio_el:
-                result["bio"] = bio_el.get_text(separator=" ", strip=True)
-
-            # ── الموقع / الدولة ────────────────────────────
-            loc_el = soup.find("div", class_="profile-location")
-            if loc_el:
-                loc_text = loc_el.get_text(strip=True)
-                result["location"] = loc_text
-                # محاولة استخراج الدولة
-                country_patterns = [
-                    "Saudi Arabia", "السعودية", "United Kingdom", "UK", "USA",
-                    "United States", "Egypt", "مصر", "UAE", "الامارات",
-                    "Jordan", "الاردن", "Iraq", "العراق", "Qatar", "قطر",
-                    "Kuwait", "الكويت", "Germany", "France", "Netherlands",
-                    "Sweden", "Canada", "Australia", "Turkey", "تركيا",
-                ]
-                for cp in country_patterns:
-                    if cp.lower() in loc_text.lower():
-                        result["country"] = cp
-                        break
-
-            # ── تاريخ الانضمام ────────────────────────────
-            joined_el = soup.find("div", class_="profile-joindate")
-            if not joined_el:
-                # بحث بديل
-                for span in soup.find_all("span"):
-                    txt = span.get_text(strip=True)
-                    if "انضم" in txt or "joined" in txt.lower() or "تاريخ" in txt:
-                        result["joined_date"] = txt
-                        break
-            else:
-                span_el = joined_el.find("span", title=True)
-                result["joined_date"] = span_el["title"] if span_el and span_el.get("title") else joined_el.get_text(strip=True)
-
-            # ── التحقق ────────────────────────────────────
-            verified_el = soup.find("span", class_="verified-icon")
-            if not verified_el:
-                verified_el = soup.find("i", class_=lambda c: c and "verified" in c)
-            result["verified"] = verified_el is not None
-
-            # ── الإحصائيات ────────────────────────────────
-            stats_container = soup.find("ul", class_="profile-stats")
-            if stats_container:
-                stat_items = stats_container.find_all("li")
-                for item in stat_items:
-                    header = item.find("span", class_="profile-stat-header")
-                    num    = item.find("span", class_="profile-stat-num")
-                    if header and num:
-                        lbl = header.get_text(strip=True).lower()
-                        val = num.get_text(strip=True)
-                        if "tweet" in lbl or "منشور" in lbl or "post" in lbl:
-                            result["tweets_count"] = val
-                        elif "following" in lbl or "يتابع" in lbl:
-                            result["following"] = val
-                        elif "follower" in lbl or "متابع" in lbl:
-                            result["followers"] = val
-
-            # ── الموقع الإلكتروني ─────────────────────────
-            website_el = soup.find("div", class_="profile-website")
-            if website_el:
-                a_el = website_el.find("a")
-                result["website"] = a_el["href"] if a_el else website_el.get_text(strip=True)
-
-            # ── صورة الملف الشخصي ─────────────────────────
-            img_el = soup.find("img", class_="profile-card-avatar")
-            if not img_el:
-                av_wrap = soup.find("a", class_="profile-card-avatar")
-                if av_wrap:
-                    img_el = av_wrap.find("img")
-            if img_el and img_el.get("src"):
-                src = img_el["src"]
-                result["profile_image"] = f"{mirror}{src}" if src.startswith("/") else src
-
-            # ── التغريدة المثبّتة ─────────────────────────
-            pinned = soup.find("div", class_="pinned")
-            if pinned:
-                pinned_content = pinned.find("div", class_="tweet-content")
-                if pinned_content:
-                    result["pinned_tweet"] = pinned_content.get_text(separator=" ", strip=True)
-
-            # ── أحدث المنشورات ────────────────────────────
-            tweet_divs = soup.find_all("div", class_="tweet-content", limit=10)
-            result["recent_tweets"] = [
-                t.get_text(separator=" ", strip=True)
-                for t in tweet_divs
-                if t.get_text(strip=True)
-            ]
-
-            # ── محاولة استخراج User ID من الصفحة ─────────
-            # Nitter يضع الـ ID في بعض الروابط
-            for a_tag in soup.find_all("a", href=True):
-                href = a_tag["href"]
-                # /intent/user?user_id=XXXXX
-                uid_match = re.search(r"user_id=(\d+)", href)
-                if uid_match:
-                    result["user_id"] = uid_match.group(1)
-                    break
-
-            # بحث بديل عن الـ ID في meta tags
-            if not result["user_id"]:
-                for meta in soup.find_all("meta"):
-                    content = meta.get("content", "")
-                    uid_m   = re.search(r"user_id[=:](\d+)", content)
-                    if uid_m:
-                        result["user_id"] = uid_m.group(1)
-                        break
-
-            # ── معلومات "متصل عبر" من آخر المنشورات ──────
-            # يظهر في بعض نسخ Nitter كـ "Twitter for iPhone" أو "United Kingdom App Store"
-            source_els = soup.find_all("span", class_="tweet-source")
-            if not source_els:
-                source_els = soup.find_all("a", class_="tweet-source")
-            if source_els:
-                sources = list(set([s.get_text(strip=True) for s in source_els if s.get_text(strip=True)]))
-                result["connected_via"] = " | ".join(sources[:3])
-
-            # ── حساب خاص؟ ────────────────────────────────
-            private_el = soup.find("div", class_="protected")
-            if not private_el:
-                private_el = soup.find("span", string=lambda t: t and "protected" in t.lower())
-            result["is_private"] = private_el is not None
-
-            # ── تحليل VPN ────────────────────────────────
-            result["vpn_info"] = detect_vpn_indicators(result)
-
-            if result["display_name"] or result["recent_tweets"]:
-                return result
-
-        except Exception as e:
-            result["error"] = str(e)
-            continue
-
-    # إذا فشلت Nitter، حاول Twitter oEmbed للحصول على الاسم الأساسي
-    if not result["display_name"]:
-        try:
-            test_url  = f"https://twitter.com/{clean_username}"
-            oembed_u  = f"https://publish.twitter.com/oembed?url={quote_plus(test_url)}&omit_script=true"
-            r         = requests.get(oembed_u, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code == 200:
-                data = r.json()
-                result["display_name"] = data.get("author_name", "")
-                # استخراج username من author_url
-                au = data.get("author_url", "")
-                if au:
-                    m2 = re.search(r"twitter\.com/([^/?]+)", au)
-                    if m2:
-                        result["username"] = "@" + m2.group(1)
-        except Exception:
-            pass
-
-    return result
-
-# ════════════════════════════════════════════════════════════
 NITTER_MIRRORS = [
     "https://nitter.privacydev.net",
     "https://nitter.poast.org",
@@ -452,1151 +98,1727 @@ NITTER_MIRRORS = [
     "https://nitter.space",
 ]
 
+# ═══════════════════════════════════════════════════════════════
+# دوال مساعدة للروابط
+# ═══════════════════════════════════════════════════════════════
+def is_tweet_url(url: str) -> bool:
+    return bool(TWEET_URL_PATTERN.match(url.strip()))
+
+def is_profile_url(url: str) -> bool:
+    return bool(PROFILE_URL_PATTERN.match(url.strip()))
+
+def extract_tweet_id(url: str) -> Optional[str]:
+    m = re.search(r"/status/(\d+)", url)
+    return m.group(1) if m else None
+
+def extract_username_from_url(url: str) -> Optional[str]:
+    m = re.search(r"(?:twitter\.com|x\.com)/([^/?\s]+)", url, re.IGNORECASE)
+    if m:
+        u = m.group(1)
+        if u.lower() not in ("search", "hashtag", "i", "intent", "home"):
+            return u
+    return None
+
+def normalize_tweet_url(url: str) -> str:
+    url = re.sub(r"\?.*$", "", url.strip())
+    url = re.sub(r"x\.com", "twitter.com", url, flags=re.IGNORECASE)
+    url = re.sub(r"^http://", "https://", url)
+    return url
+
+# ═══════════════════════════════════════════════════════════════
+# إدارة Gemini والـ Retry
+# ═══════════════════════════════════════════════════════════════
+def exponential_backoff(attempt: int, base: float = 1.0, cap: float = 60.0) -> float:
+    return min(cap, base * (2 ** attempt) + random.uniform(0, 1))
+
+def call_gemini_with_retry(model_obj, prompt: str, max_retries: int = MAX_RETRIES):
+    for attempt in range(max_retries):
+        try:
+            response = model_obj.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            err = str(e).lower()
+            if "429" in err or "quota" in err or "rate" in err:
+                wait = exponential_backoff(attempt)
+                time.sleep(wait)
+                continue
+            elif "404" in err or "not found" in err:
+                return None
+            else:
+                if attempt < max_retries - 1:
+                    time.sleep(exponential_backoff(attempt))
+                    continue
+                return None
+    return None
+
+def gemini_generate(api_key: str, prompt: str, status_callback=None) -> Tuple[Optional[str], str]:
+    if not GENAI_AVAILABLE:
+        return None, "مكتبة google-generativeai غير مثبتة"
+    genai.configure(api_key=api_key)
+    for model_info in GEMINI_MODELS:
+        model_name = model_info["name"]
+        try:
+            if status_callback:
+                status_callback(f"⏳ جاري المحاولة مع نموذج: {model_name}")
+            model = genai.GenerativeModel(model_name)
+            result = call_gemini_with_retry(model, prompt)
+            if result:
+                return result, model_name
+        except Exception as e:
+            if status_callback:
+                status_callback(f"⚠️ فشل {model_name}: {str(e)[:60]}")
+        time.sleep(REQUEST_DELAY)
+    return None, "فشلت جميع النماذج"
+
+# ═══════════════════════════════════════════════════════════════
+# كشف VPN
+# ═══════════════════════════════════════════════════════════════
+def detect_vpn_indicators(account_data: Dict) -> Dict:
+    vpn_info = {
+        "detected":    False,
+        "risk_level":  "منخفض",
+        "indicators":  [],
+        "score":       0,
+    }
+    bio      = (account_data.get("bio", "") or "").lower()
+    location = (account_data.get("location", "") or "").lower()
+
+    vpn_keywords = ["vpn", "proxy", "tor", "anonymous", "privacy", "nordvpn",
+                    "expressvpn", "surfshark", "hide", "tunnel"]
+    for kw in vpn_keywords:
+        if kw in bio:
+            vpn_info["indicators"].append(f"كلمة مفتاحية في البيو: {kw}")
+            vpn_info["score"] += 25
+
+    suspicious_locations = ["netherlands", "هولندا", "uk", "المملكة المتحدة",
+                            "switzerland", "سويسرا", "iceland", "آيسلندا",
+                            "panama", "بنما"]
+    for loc in suspicious_locations:
+        if loc in location:
+            vpn_info["indicators"].append(f"موقع مشبوه: {location}")
+            vpn_info["score"] += 15
+            break
+
+    country_from_data = account_data.get("country", "")
+    if country_from_data and location:
+        if country_from_data.lower() not in location and location not in country_from_data.lower():
+            vpn_info["indicators"].append("تعارض بين الموقع المُعلن والدولة المرصودة")
+            vpn_info["score"] += 20
+
+    if vpn_info["score"] >= 40:
+        vpn_info["detected"]   = True
+        vpn_info["risk_level"] = "عالٍ"
+    elif vpn_info["score"] >= 20:
+        vpn_info["detected"]   = True
+        vpn_info["risk_level"] = "متوسط"
+
+    return vpn_info
+
+# ═══════════════════════════════════════════════════════════════
+# جلب بيانات الحساب من Nitter
+# ═══════════════════════════════════════════════════════════════
+def fetch_account_details_nitter(username: str, api_key: str = "") -> Dict:
+    account_data = {
+        "username":       username,
+        "display_name":   "",
+        "user_id":        "",
+        "bio":            "",
+        "location":       "",
+        "country":        "",
+        "joined_date":    "",
+        "verified":       False,
+        "protected":      False,
+        "followers":      0,
+        "following":      0,
+        "tweets_count":   0,
+        "profile_image":  "",
+        "pinned_tweet":   "",
+        "recent_tweets":  [],
+        "connected_via":  "",
+        "vpn_info":       {},
+        "fetch_status":   "pending",
+    }
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "ar,en;q=0.9",
+    }
+
+    for mirror in NITTER_MIRRORS:
+        try:
+            url = f"{mirror}/{username}"
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                continue
+
+            if not BS4_AVAILABLE:
+                account_data["fetch_status"] = "bs4_missing"
+                account_data["connected_via"] = mirror
+                return account_data
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # ── الاسم والتوثيق ──
+            name_el = soup.find("a", class_="profile-card-fullname")
+            if name_el:
+                account_data["display_name"] = name_el.get_text(strip=True)
+            verified_el = soup.find("span", class_="verified-icon")
+            if verified_el:
+                account_data["verified"] = True
+
+            # ── البيو ──
+            bio_el = soup.find("div", class_="profile-bio")
+            if bio_el:
+                account_data["bio"] = bio_el.get_text(strip=True)
+
+            # ── الإحصائيات ──
+            stats = soup.find_all("li", class_="profile-stat-item")
+            for stat in stats:
+                num_el  = stat.find("span", class_="profile-stat-num")
+                name_el2 = stat.find("span", class_="profile-stat-header")
+                if num_el and name_el2:
+                    val  = num_el.get_text(strip=True).replace(",", "")
+                    kind = name_el2.get_text(strip=True).lower()
+                    try:
+                        int_val = int(val)
+                        if "tweet" in kind or "منشور" in kind:
+                            account_data["tweets_count"] = int_val
+                        elif "follow" in kind and "ing" in kind:
+                            account_data["following"] = int_val
+                        elif "follow" in kind:
+                            account_data["followers"] = int_val
+                    except ValueError:
+                        pass
+
+            # ── الموقع ──
+            loc_el = soup.find("div", class_="profile-location")
+            if loc_el:
+                account_data["location"] = loc_el.get_text(strip=True)
+
+            # ── تاريخ الانضمام ──
+            joined_el = soup.find("div", class_="profile-joindate")
+            if joined_el:
+                account_data["joined_date"] = joined_el.get_text(strip=True)
+
+            # ── صورة الحساب ──
+            img_el = soup.find("img", class_="profile-card-avatar")
+            if img_el and img_el.get("src"):
+                src = img_el["src"]
+                if src.startswith("/"):
+                    src = mirror + src
+                account_data["profile_image"] = src
+
+            # ── آخر التغريدات ──
+            tweets_els = soup.find_all("div", class_="tweet-content", limit=5)
+            for tw in tweets_els:
+                account_data["recent_tweets"].append(tw.get_text(strip=True))
+
+            # ── رقم الحساب (User ID) ──
+            rss_link = soup.find("a", href=re.compile(r"/\w+/rss"))
+            if rss_link:
+                account_data["user_id"] = f"@{username}"
+            for meta in soup.find_all("meta"):
+                content = meta.get("content", "")
+                if "twitter:creator:id" in str(meta) or "user_id" in str(meta):
+                    account_data["user_id"] = content
+                    break
+
+            account_data["connected_via"] = mirror
+            account_data["fetch_status"]  = "success"
+            account_data["vpn_info"]      = detect_vpn_indicators(account_data)
+            return account_data
+
+        except Exception:
+            continue
+
+    account_data["fetch_status"] = "failed"
+    return account_data
+
+# ═══════════════════════════════════════════════════════════════
+# جلب التغريدة
+# ═══════════════════════════════════════════════════════════════
 def fetch_via_oembed(tweet_url: str) -> Dict:
-    result = {"text": "", "author": "", "username": "", "images": [],
-              "video_url": None, "is_retweet": False}
+    result = {"text": "", "author": "", "author_url": "",
+              "html": "", "media_urls": [], "error": None}
     try:
-        oembed_url = f"https://publish.twitter.com/oembed?url={quote_plus(tweet_url)}&lang=ar&omit_script=true"
-        resp = requests.get(oembed_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        api = "https://publish.twitter.com/oembed"
+        params = {"url": tweet_url, "lang": "ar", "hide_thread": "false"}
+        resp = requests.get(api, params=params, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            result["author"] = data.get("author_name", "")
-            html_content = data.get("html", "")
-            if BS4_AVAILABLE and html_content:
-                soup  = BeautifulSoup(html_content, "html.parser")
-                texts = [p.get_text(separator=" ", strip=True)
-                         for p in soup.find_all("p") if p.get_text(strip=True)]
-                result["text"]   = " ".join(texts)
-                result["images"] = [img["src"] for img in soup.find_all("img") if img.get("src")]
-            author_url = data.get("author_url", "")
-            if author_url:
-                m = re.search(r"twitter\.com/([^/?]+)", author_url, re.IGNORECASE)
-                if m:
-                    result["username"] = f"@{m.group(1)}"
+            result["author"]     = data.get("author_name", "")
+            result["author_url"] = data.get("author_url", "")
+            result["html"]       = data.get("html", "")
+            html_text = re.sub(r"<[^>]+>", " ", result["html"])
+            result["text"] = " ".join(html_text.split())
+        else:
+            result["error"] = f"oEmbed HTTP {resp.status_code}"
     except Exception as e:
         result["error"] = str(e)
     return result
 
 def fetch_via_nitter_tweet(tweet_url: str) -> Dict:
-    result = {"text": "", "author": "", "username": "", "images": [],
-              "video_url": None, "is_retweet": False, "error": ""}
-    tweet_id     = extract_tweet_id(tweet_url)
-    username_raw = extract_username_from_url(tweet_url).lstrip("@")
+    result = {"text": "", "author": "", "images": [], "video": "", "error": None}
+    tweet_id = extract_tweet_id(tweet_url)
+    username = extract_username_from_url(tweet_url)
+    if not tweet_id or not username:
+        result["error"] = "تعذّر استخراج معرّف التغريدة أو اسم المستخدم"
+        return result
+
+    headers = {"User-Agent": "Mozilla/5.0"}
     for mirror in NITTER_MIRRORS:
         try:
-            nitter_url = f"{mirror}/{username_raw}/status/{tweet_id}"
-            resp = requests.get(nitter_url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+            url  = f"{mirror}/{username}/status/{tweet_id}"
+            resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code != 200:
                 continue
             if not BS4_AVAILABLE:
-                continue
-            soup = BeautifulSoup(resp.text, "html.parser")
-            content_div = soup.find("div", class_="tweet-content")
-            if content_div:
-                result["text"] = content_div.get_text(separator=" ", strip=True)
-            name_el  = soup.find("a", class_="fullname")
-            uname_el = soup.find("a", class_="username")
-            if name_el:  result["author"]   = name_el.get_text(strip=True)
-            if uname_el: result["username"] = uname_el.get_text(strip=True)
-            if soup.find("span", class_="retweet-header"):
-                result["is_retweet"] = True
-            for img in soup.find_all("img", class_="media-image"):
-                src = img.get("src", "")
-                if src:
-                    result["images"].append(f"{mirror}{src}" if src.startswith("/") else src)
-            video_el = soup.find("video")
-            if video_el:
-                result["video_url"] = video_el.get("src", "")
-            if result["text"] or result["images"]:
+                result["error"] = "bs4 غير متاح"
                 return result
-        except Exception as e:
-            result["error"] = str(e)
+            soup = BeautifulSoup(resp.text, "html.parser")
+            content_el = soup.find("div", class_="tweet-content")
+            if content_el:
+                result["text"] = content_el.get_text(strip=True)
+            name_el = soup.find("a", class_="fullname")
+            if name_el:
+                result["author"] = name_el.get_text(strip=True)
+            for img in soup.find_all("img", class_="still-image"):
+                src = img.get("src", "")
+                if src.startswith("/"):
+                    src = mirror + src
+                result["images"].append(src)
+            return result
+        except Exception:
             continue
+
+    result["error"] = "فشلت جميع مرايا Nitter"
     return result
 
-def download_media_yt_dlp(tweet_url: str, output_dir: str) -> Dict:
-    result = {"images": [], "video_path": None, "error": ""}
-    yt_dlp_path = shutil.which("yt-dlp")
-    if not yt_dlp_path:
-        result["error"] = "yt-dlp غير مثبّت"
-        return result
+def download_media_yt_dlp(tweet_url: str, output_dir: str) -> List[str]:
+    files = []
+    if not shutil.which("yt-dlp"):
+        return files
     try:
-        cmd = [yt_dlp_path, tweet_url, "--no-playlist", "--write-thumbnail",
-               "--skip-download", "-o", os.path.join(output_dir, "%(id)s.%(ext)s"), "--quiet"]
-        subprocess.run(cmd, timeout=30, capture_output=True, check=False)
-        for f in Path(output_dir).glob("*"):
-            ext = f.suffix.lower()
-            if ext in (".jpg", ".jpeg", ".png", ".webp"):
-                result["images"].append(str(f))
-            elif ext in (".mp4", ".webm", ".mkv"):
-                result["video_path"] = str(f)
-    except Exception as e:
-        result["error"] = str(e)
-    return result
+        cmd = ["yt-dlp", "--write-thumbnail", "-o",
+               os.path.join(output_dir, "%(id)s.%(ext)s"), tweet_url]
+        subprocess.run(cmd, capture_output=True, timeout=30)
+        for f in Path(output_dir).iterdir():
+            if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mkv"):
+                files.append(str(f))
+    except Exception:
+        pass
+    return files
 
-def fetch_tweet_with_media(url: str, api_key: str, status_fn=None) -> Dict:
-    tweet_data = {
-        "text": "", "author": "", "username": "", "url_username": "",
-        "images": [], "video_path": None, "video_url": None,
-        "is_retweet": False, "tweet_id": "", "original_url": url,
+def fetch_tweet_with_media(tweet_url: str) -> Dict:
+    result = {
+        "text": "", "author": "", "username": "",
+        "images": [], "video": "", "source": "", "error": None
     }
-    tweet_data["url_username"] = extract_username_from_url(url)
-    tweet_data["tweet_id"]     = extract_tweet_id(url) or ""
-    normalized = normalize_tweet_url(url)
+    tweet_url = normalize_tweet_url(tweet_url)
 
-    if status_fn: status_fn("📡 الطبقة 1: oEmbed API...")
-    oembed = fetch_via_oembed(normalized)
-    if oembed.get("text"):
-        tweet_data.update(oembed)
-        if status_fn: status_fn("✅ oEmbed: تم جلب النص")
-    else:
-        if status_fn: status_fn("📡 الطبقة 2: Nitter mirrors...")
-        nitter = fetch_via_nitter_tweet(normalized)
-        if nitter.get("text") or nitter.get("images"):
-            tweet_data.update(nitter)
-            if status_fn: status_fn("✅ Nitter: تم جلب البيانات")
-        else:
-            if status_fn: status_fn("⚠️ Nitter فشل")
+    oembed = fetch_via_oembed(tweet_url)
+    if not oembed.get("error") and oembed.get("text"):
+        result["text"]     = oembed["text"]
+        result["author"]   = oembed["author"]
+        result["username"] = extract_username_from_url(oembed.get("author_url", "")) or \
+                             extract_username_from_url(tweet_url) or ""
+        result["source"]   = "oEmbed"
 
-    if not tweet_data["images"] and not tweet_data.get("video_path"):
-        if status_fn: status_fn("📡 الطبقة 3: yt-dlp للوسائط...")
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            media = download_media_yt_dlp(normalized, tmp_dir)
-            if media["images"]:     tweet_data["images"].extend(media["images"])
-            if media["video_path"]: tweet_data["video_path"] = media["video_path"]
+    if not result["text"]:
+        nitter = fetch_via_nitter_tweet(tweet_url)
+        if not nitter.get("error") and nitter.get("text"):
+            result["text"]   = nitter["text"]
+            result["author"] = nitter["author"]
+            result["images"] = nitter["images"]
+            result["source"] = "Nitter"
 
-    return tweet_data
+    if not result["username"]:
+        result["username"] = extract_username_from_url(tweet_url) or ""
 
-# ════════════════════════════════════════════════════════════
-def ocr_image_tesseract(image_path_or_url: str) -> str:
-    if not PIL_AVAILABLE or not TESSERACT_AVAILABLE:
+    return result
+
+# ═══════════════════════════════════════════════════════════════
+# OCR والفيديو
+# ═══════════════════════════════════════════════════════════════
+def ocr_image_tesseract(image_path: str) -> str:
+    if not TESSERACT_AVAILABLE or not PIL_AVAILABLE:
         return ""
     try:
-        if image_path_or_url.startswith("http"):
-            resp = requests.get(image_path_or_url, timeout=10)
-            img  = Image.open(io.BytesIO(resp.content))
-        else:
-            img = Image.open(image_path_or_url)
-        return pytesseract.image_to_string(img, lang=OCR_LANG)
-    except Exception as e:
-        return f"[OCR Error: {e}]"
+        img  = Image.open(image_path)
+        text = pytesseract.image_to_string(img, lang=OCR_LANG)
+        return text.strip()
+    except Exception:
+        return ""
 
-def ocr_image_gemini(image_path_or_url: str, api_key: str, status_fn=None) -> str:
-    if not GEMINI_AVAILABLE or not api_key:
+def ocr_image_gemini(image_path: str, api_key: str) -> str:
+    if not GENAI_AVAILABLE or not PIL_AVAILABLE:
         return ""
     try:
-        if image_path_or_url.startswith("http"):
-            resp     = requests.get(image_path_or_url, timeout=10)
-            img_data = resp.content
-        else:
-            with open(image_path_or_url, "rb") as f:
-                img_data = f.read()
-        img_b64 = base64.b64encode(img_data).decode()
-        prompt  = ["استخرج كل النصوص الموجودة في هذه الصورة بدقة.",
-                   {"mime_type": "image/jpeg", "data": img_b64}]
-        text, _ = gemini_generate(prompt, api_key, status_fn)
-        return text or ""
-    except Exception as e:
-        return f"[Gemini OCR Error: {e}]"
+        genai.configure(api_key=api_key)
+        img   = Image.open(image_path)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        resp  = model.generate_content(
+            ["استخرج كل النصوص الموجودة في هذه الصورة بدقة:", img]
+        )
+        return resp.text.strip()
+    except Exception:
+        return ""
 
-def transcribe_video_gemini(video_path: str, api_key: str, status_fn=None) -> str:
-    if not GEMINI_AVAILABLE or not api_key or not os.path.exists(video_path):
+def transcribe_video_gemini(video_path: str, api_key: str) -> str:
+    if not GENAI_AVAILABLE:
         return ""
     try:
+        genai.configure(api_key=api_key)
         with open(video_path, "rb") as f:
             video_data = f.read()
-        video_b64 = base64.b64encode(video_data).decode()
-        ext       = Path(video_path).suffix.lower()
-        mime_map  = {".mp4": "video/mp4", ".webm": "video/webm", ".mkv": "video/x-matroska"}
-        mime_type = mime_map.get(ext, "video/mp4")
-        prompt    = ["استخرج وفرّغ كل الكلام في هذا الفيديو بالعربية.",
-                     {"mime_type": mime_type, "data": video_b64}]
-        text, _ = gemini_generate(prompt, api_key, status_fn)
-        return text or ""
-    except Exception as e:
-        return f"[Video Error: {e}]"
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        resp  = model.generate_content([
+            "فرّغ محتوى هذا الفيديو نصياً بالكامل:",
+            {"mime_type": "video/mp4", "data": base64.b64encode(video_data).decode()}
+        ])
+        return resp.text.strip()
+    except Exception:
+        return ""
 
-def improve_arabic_text(text: str, api_key: str, status_fn=None) -> str:
-    if not text.strip() or not api_key:
+def improve_arabic_text(text: str, api_key: str) -> str:
+    if not text or not api_key:
         return text
-    prompt = "صحّح هذا النص العربي إملائياً ونحوياً. أعد النص المحسّن فقط:\n\n" + text
-    result, _ = gemini_generate(prompt, api_key, status_fn)
+    prompt = (
+        "حسّن النص العربي التالي من حيث التشكيل والإملاء، "
+        "مع الحفاظ على المعنى الأصلي:\n\n" + text
+    )
+    result, _ = gemini_generate(api_key, prompt)
     return result or text
 
-# ════════════════════════════════════════════════════════════
-def build_profile_analysis_prompt(profile_data: Dict, tweet_text: str = "") -> str:
-    username     = profile_data.get("username", "")
-    display_name = profile_data.get("display_name", "")
-    bio          = profile_data.get("bio", "")
-    location     = profile_data.get("location", "")
-    country      = profile_data.get("country", "")
-    joined       = profile_data.get("joined_date", "")
-    followers    = profile_data.get("followers", "")
-    connected    = profile_data.get("connected_via", "")
-    verified     = profile_data.get("verified", False)
-    vpn_info     = profile_data.get("vpn_info", {})
-    recent       = profile_data.get("recent_tweets", [])
-    tweets_sample = "\n".join(f"- {t}" for t in recent[:8]) if recent else "(لا توجد منشورات)"
-    cats_list     = " | ".join(ACCOUNT_CATEGORIES.keys())
+# ═══════════════════════════════════════════════════════════════
+# بناء الـ Prompts
+# ═══════════════════════════════════════════════════════════════
+def build_analysis_prompt(tweet_text: str, mode: str = "executive",
+                           ocr_text: str = "", video_transcript: str = "",
+                           username: str = "") -> str:
+    extra = ""
+    if ocr_text:
+        extra += f"\n\n📸 نصوص مستخرجة من الصور:\n{ocr_text}"
+    if video_transcript:
+        extra += f"\n\n🎥 نص الفيديو:\n{video_transcript}"
 
-    lines = [
-        "انت محلل استخباراتي متخصص في تحليل الحسابات على منصة X في السياق السعودي.",
-        "",
-        "بيانات الحساب:",
-        "الاسم: " + display_name,
-        "المعرف: " + username,
-        "السيرة الذاتية: " + (bio or "فارغة"),
-        "الموقع المُعلن: " + (location or "غير محدد"),
-        "الدولة: " + (country or "غير محددة"),
-        "تاريخ الانضمام: " + (joined or "غير معروف"),
-        "متحقق منه: " + ("نعم" if verified else "لا"),
-        "متصل عبر: " + (connected or "غير معروف"),
-        "المتابعون: " + (followers or "غير معروف"),
-        "مؤشر VPN: " + str(vpn_info.get("vpn_risk_level", "منخفض")),
-        "",
-        "عينة من المنشورات الأخيرة:",
-        tweets_sample,
-    ]
-    if tweet_text:
-        lines += ["", "المنشور المحدد:", tweet_text]
-
-    lines += [
-        "",
-        "التصنيفات: " + cats_list,
-        "",
-        "اعد JSON صحيحا فقط:",
-        "{",
-        '  "primary_category": "احد التصنيفات",',
-        '  "secondary_category": "تصنيف ثانوي او فارغ",',
-        '  "risk_level": "عالي او متوسط او منخفض",',
-        '  "risk_score": 7,',
-        '  "scores": {"عدائية":3,"تهكم":5,"استنجاد":2,"تدخل_خارجي":1,"دعم_وطني":8,"اعلامي":4},',
-        '  "profile_summary": "وصف موجز في 2-3 جمل",',
-        '  "behavioral_patterns": ["نمط 1", "نمط 2"],',
-        '  "key_topics": ["موضوع 1", "موضوع 2"],',
-        '  "recommendations": ["توصية 1", "توصية 2"],',
-        '  "account_origin_guess": "سعودي او خليجي او عربي او اجنبي",',
-        '  "influence_level": "عالي او متوسط او منخفض",',
-        '  "vpn_assessment": "تقييم استخدام VPN في جملة واحدة"',
-        "}",
-    ]
-    return "\n".join(lines)
-
-def analyze_account_profile(profile_data: Dict, tweet_text: str, api_key: str, status_fn=None) -> Dict:
-    default = {
-        "primary_category": "محايد", "secondary_category": "",
-        "risk_level": "منخفض", "risk_score": 0, "scores": {},
-        "profile_summary": "تعذّر التحليل", "behavioral_patterns": [],
-        "key_topics": [], "recommendations": [],
-        "account_origin_guess": "غير محدد", "influence_level": "منخفض",
-        "vpn_assessment": "",
+    mode_instructions = {
+        "executive": "أجرِ تحليلاً تنفيذياً استخباراتياً شاملاً",
+        "media":     "أجرِ تحليلاً إعلامياً وتحقق من صحة المحتوى",
+        "security":  "أجرِ تحليلاً أمنياً مفصلاً للمخاطر والتهديدات",
+        "general":   "أجرِ تحليلاً عاماً شاملاً",
     }
-    if not api_key:
-        default["profile_summary"] = "أدخل مفتاح Gemini API"
-        return default
+    instruction = mode_instructions.get(mode, mode_instructions["executive"])
 
-    prompt = build_profile_analysis_prompt(profile_data, tweet_text)
-    if status_fn:
-        status_fn("🧠 تحليل طبيعة الحساب...")
+    return f"""أنت محلل استخباراتي متخصص. {instruction} للمنشور التالي من منصة X.
 
-    raw_text, used_model = gemini_generate(prompt, api_key, status_fn)
-    if not raw_text:
-        default["profile_summary"] = "فشل التحليل"
-        return default
+المستخدم: @{username}
+المحتوى: {tweet_text}{extra}
 
+أعد الرد بصيغة JSON فقط (بدون أي نص خارج JSON):
+{{
+  "executive_summary": "ملخص تنفيذي شامل في 3-5 جمل",
+  "key_points": ["نقطة 1", "نقطة 2", "نقطة 3"],
+  "risks": ["خطر 1", "خطر 2"],
+  "recommendations": ["توصية 1", "توصية 2"],
+  "sentiment": "إيجابي/سلبي/محايد",
+  "sentiment_score": 75,
+  "topics": ["موضوع 1", "موضوع 2"],
+  "urgency_level": "عالٍ/متوسط/منخفض",
+  "credibility_score": 80,
+  "analysis_mode": "{mode}"
+}}"""
+
+def build_profile_analysis_prompt(account_data: Dict) -> str:
+    recent = "\n".join(account_data.get("recent_tweets", [])[:3])
+    return f"""أنت محلل استخباراتي متخصص في تحليل الهوية الرقمية.
+
+بيانات الحساب:
+- الاسم: {account_data.get('display_name', '')}
+- المعرّف: @{account_data.get('username', '')}
+- البيو: {account_data.get('bio', '')}
+- الموقع: {account_data.get('location', '')}
+- تاريخ الانضمام: {account_data.get('joined_date', '')}
+- المتابعون: {account_data.get('followers', 0)}
+- التغريدات الأخيرة:
+{recent}
+
+بناءً على هذه البيانات، صنّف طبيعة الحساب وأعد الرد بصيغة JSON فقط:
+{{
+  "primary_category": "معادي/مشبوه/محايد/مواطن/داعم/إعلامي/مستنجد/ساخر/متدخل خارجي",
+  "risk_level": "عالٍ/متوسط/منخفض",
+  "scores": {{
+    "hostility": 0,
+    "authenticity": 0,
+    "influence": 0,
+    "external_interference": 0
+  }},
+  "summary": "ملخص تحليل الحساب",
+  "patterns": ["نمط 1", "نمط 2"],
+  "recommendations": ["توصية 1", "توصية 2"],
+  "origin_guess": "الدولة المحتملة",
+  "influence_level": "عالٍ/متوسط/منخفض"
+}}"""
+
+# ═══════════════════════════════════════════════════════════════
+# تنفيذ التحليل
+# ═══════════════════════════════════════════════════════════════
+def run_analysis(tweet_text: str, api_key: str, mode: str = "executive",
+                  ocr_text: str = "", video_transcript: str = "",
+                  username: str = "", status_callback=None) -> Dict:
+    prompt = build_analysis_prompt(tweet_text, mode, ocr_text, video_transcript, username)
+    raw, model_used = gemini_generate(api_key, prompt, status_callback)
+    if not raw:
+        return {"error": "فشل التحليل - تحقق من مفتاح API"}
+
+    cleaned = re.sub(r"```(?:json)?|```", "", raw).strip()
     try:
-        clean = raw_text.strip()
-        clean = re.sub(r"^```json\s*", "", clean)
-        clean = re.sub(r"^```\s*",     "", clean)
-        clean = re.sub(r"\s*```$",     "", clean)
-        result = json.loads(clean)
-        result["_model_used"] = used_model
-        return result
-    except Exception:
-        m = re.search(r"\{[\s\S]+\}", raw_text)
-        if m:
-            try:
-                result = json.loads(m.group())
-                result["_model_used"] = used_model
-                return result
-            except Exception:
-                pass
-        default["profile_summary"] = "استجابة غير منظمة"
-        return default
+        data = json.loads(cleaned)
+        data["_model_used"] = model_used
+        return data
+    except json.JSONDecodeError:
+        return {"executive_summary": raw, "_model_used": model_used, "_raw": True}
 
-def build_analysis_prompt(tweet_data: Dict, mode: str) -> str:
-    author     = tweet_data.get("author", "")
-    username   = tweet_data.get("username", "") or tweet_data.get("url_username", "")
-    is_retweet = tweet_data.get("is_retweet", False)
-    text       = tweet_data.get("text", "")
-    tweet_id   = tweet_data.get("tweet_id", "")
-
-    author_block = "صاحب الحساب: " + author + (" (" + username + ")" if username else "")
-    if is_retweet:
-        author_block += "\nهذا المنشور اعادة نشر (Retweet)"
-
-    focus_map = {
-        "executive": "ركز على الجوانب الاستراتيجية والقرارات والمخاطر.",
-        "media":     "ركز على الاسلوب الاعلامي والرسائل والجمهور.",
-        "security":  "ركز على المخاطر الامنية والتحريض والمعلومات المضللة.",
-        "general":   "قدم تحليلا شاملا ومتوازنا.",
-    }
-    focus   = focus_map.get(mode, focus_map["general"])
-    rt_note = "هذا اعادة نشر" if is_retweet else ""
-
-    lines = [
-        "انت محلل ذكاء اصطناعي. حلل هذا المنشور من X.",
-        "", "بيانات المنشور:", author_block, "معرف المنشور: " + tweet_id,
-        "", "المحتوى:", (text if text else "(لا يوجد نص)"),
-        "", "تعليمات: " + focus,
-        "", "اعد JSON صحيحا فقط:",
-        "{",
-        '  "executive_summary": "ملخص في 3-4 جمل",',
-        '  "key_points": ["نقطة 1", "نقطة 2", "نقطة 3"],',
-        '  "risks": ["خطر 1", "خطر 2"],',
-        '  "recommendations": ["توصية 1", "توصية 2"],',
-        '  "sentiment": "ايجابي او سلبي او محايد",',
-        '  "topics": ["موضوع 1", "موضوع 2"],',
-        '  "is_retweet_note": "' + rt_note + '"',
-        "}",
-    ]
-    return "\n".join(lines)
-
-def run_analysis(tweet_data: Dict, api_key: str, mode: str, status_fn=None) -> Dict:
-    default_error = {
-        "executive_summary": "فشل التحليل",
-        "key_points": [], "risks": [], "recommendations": [],
-        "sentiment": "غير محدد", "topics": [], "is_retweet_note": ""
-    }
-    if not api_key:
-        default_error["executive_summary"] = "ادخل مفتاح Gemini API"
-        return default_error
-
-    raw_text, used_model = gemini_generate(
-        build_analysis_prompt(tweet_data, mode), api_key, status_fn
-    )
-    if not raw_text:
-        default_error["executive_summary"] = "فشل التحليل – انتظر دقيقة وأعد المحاولة"
-        return default_error
-
+def analyze_account_profile(account_data: Dict, api_key: str,
+                              status_callback=None) -> Dict:
+    prompt = build_profile_analysis_prompt(account_data)
+    raw, model_used = gemini_generate(api_key, prompt, status_callback)
+    if not raw:
+        return {"error": "فشل تحليل الحساب"}
+    cleaned = re.sub(r"```(?:json)?|```", "", raw).strip()
     try:
-        clean = raw_text.strip()
-        clean = re.sub(r"^```json\s*", "", clean)
-        clean = re.sub(r"^```\s*",     "", clean)
-        clean = re.sub(r"\s*```$",     "", clean)
-        result = json.loads(clean)
-        result["_model_used"] = used_model
-        return result
-    except Exception:
-        m = re.search(r"\{[\s\S]+\}", raw_text)
-        if m:
-            try:
-                result = json.loads(m.group())
-                result["_model_used"] = used_model
-                return result
-            except Exception:
-                pass
-        default_error["executive_summary"] = "استجابة غير منظمة"
-        return default_error
+        data = json.loads(cleaned)
+        data["_model_used"] = model_used
+        return data
+    except json.JSONDecodeError:
+        return {"summary": raw, "_model_used": model_used}
 
-# ════════════════════════════════════════════════════════════
-# 🎨  CSS
-# ════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# CSS - تصميم شامل (ليلي/نهاري) + v6.7
+# ═══════════════════════════════════════════════════════════════
 def inject_css():
-    css = (
-        "<style>"
-        "@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap');"
-        ":root {"
-        "  --bg-main:#f0f4f8;--bg-card:#ffffff;--bg-card2:#f8fafc;"
-        "  --text-primary:#0f172a;--text-secondary:#334155;--text-muted:#64748b;"
-        "  --border-color:#cbd5e1;"
-        "  --accent-blue:#1DA1F2;--accent-dark:#0d47a1;"
-        "  --accent-green:#059669;--accent-red:#dc2626;--accent-orange:#d97706;"
-        "  --shadow:0 4px 16px rgba(0,0,0,0.10);--shadow-sm:0 2px 8px rgba(0,0,0,0.07);"
-        "  --sidebar-bg:#1e293b;--sidebar-text:#f1f5f9;--sidebar-muted:#94a3b8;"
-        "  --sidebar-border:#334155;--sidebar-card:#0f172a;"
-        "}"
-        "@media (prefers-color-scheme:dark){:root{"
-        "  --bg-main:#0f172a;--bg-card:#1e293b;--bg-card2:#0f172a;"
-        "  --text-primary:#f1f5f9;--text-secondary:#cbd5e1;--text-muted:#94a3b8;"
-        "  --border-color:#334155;"
-        "  --shadow:0 4px 16px rgba(0,0,0,0.40);--shadow-sm:0 2px 8px rgba(0,0,0,0.30);"
-        "}}"
-        "*,*::before,*::after{font-family:'Tajawal',Arial,sans-serif !important;box-sizing:border-box;}"
-        "html,body{direction:rtl !important;text-align:right !important;}"
-        ".stApp{background-color:var(--bg-main) !important;direction:rtl !important;}"
-        ".stApp p,.stApp span,.stApp div,.stApp label,.stApp li,"
-        ".stApp h1,.stApp h2,.stApp h3,.stApp h4{"
-        "  color:var(--text-primary) !important;-webkit-text-fill-color:var(--text-primary) !important;}"
-        "textarea,textarea[disabled],textarea:disabled{"
-        "  color:var(--text-primary) !important;-webkit-text-fill-color:var(--text-primary) !important;"
-        "  background-color:var(--bg-card2) !important;opacity:1 !important;"
-        "  font-size:1.1rem !important;line-height:1.8 !important;}"
-        "input,.stTextInput input{"
-        "  direction:rtl !important;text-align:right !important;"
-        "  color:var(--text-primary) !important;-webkit-text-fill-color:var(--text-primary) !important;"
-        "  background-color:var(--bg-card) !important;"
-        "  font-size:1.1rem !important;padding:10px 16px !important;"
-        "  border-radius:10px !important;border:2px solid var(--border-color) !important;}"
-        "[data-testid='stSidebar']{"
-        "  background-color:var(--sidebar-bg) !important;direction:rtl !important;"
-        "  min-width:320px !important;width:320px !important;}"
-        "[data-testid='stSidebar']>div{padding:1.5rem 1.2rem !important;}"
-        "[data-testid='stSidebar']*{"
-        "  direction:rtl !important;text-align:right !important;"
-        "  color:var(--sidebar-text) !important;-webkit-text-fill-color:var(--sidebar-text) !important;}"
-        "[data-testid='stSidebar'] h1,[data-testid='stSidebar'] h2,"
-        "[data-testid='stSidebar'] h3,[data-testid='stSidebar'] h4{"
-        "  font-size:1.3rem !important;font-weight:800 !important;"
-        "  color:#ffffff !important;-webkit-text-fill-color:#ffffff !important;"
-        "  border-bottom:2px solid var(--sidebar-border);padding-bottom:8px;margin-bottom:12px;}"
-        "[data-testid='stSidebar'] label,[data-testid='stSidebar'] .stCheckbox span{"
-        "  font-size:1.1rem !important;font-weight:600 !important;"
-        "  color:var(--sidebar-text) !important;-webkit-text-fill-color:var(--sidebar-text) !important;}"
-        "[data-testid='stSidebar'] input,[data-testid='stSidebar'] .stTextInput input{"
-        "  background-color:var(--sidebar-card) !important;color:#ffffff !important;"
-        "  -webkit-text-fill-color:#ffffff !important;"
-        "  border:2px solid var(--sidebar-border) !important;"
-        "  font-size:1.05rem !important;padding:10px 14px !important;border-radius:10px !important;}"
-        ".app-title{"
-        "  text-align:center !important;font-size:3rem !important;font-weight:900 !important;"
-        "  background:linear-gradient(135deg,#1DA1F2,#0d47a1) !important;"
-        "  -webkit-background-clip:text !important;-webkit-text-fill-color:transparent !important;"
-        "  padding:0.8rem 0 0.3rem 0;}"
-        ".app-subtitle{"
-        "  text-align:center !important;color:var(--text-muted) !important;"
-        "  -webkit-text-fill-color:var(--text-muted) !important;"
-        "  font-size:1.15rem !important;margin-bottom:2rem;}"
-        ".stTabs [data-baseweb='tab-list']{justify-content:flex-end !important;gap:8px;}"
-        ".stTabs [data-baseweb='tab']{"
-        "  direction:rtl !important;font-size:1.1rem !important;font-weight:700 !important;"
-        "  padding:10px 20px !important;border-radius:10px 10px 0 0 !important;}"
-        # بطاقة معلومات الحساب التفصيلية
-        ".account-info-card{"
-        "  background:var(--bg-card) !important;border-radius:16px !important;"
-        "  padding:0 !important;margin-bottom:1.5rem !important;"
-        "  box-shadow:var(--shadow) !important;overflow:hidden;}"
-        ".account-info-header{"
-        "  background:linear-gradient(135deg,#1DA1F2,#0d47a1);"
-        "  padding:1.5rem 2rem;direction:rtl;text-align:right;}"
-        ".account-info-header *{color:#ffffff !important;-webkit-text-fill-color:#ffffff !important;}"
-        ".account-info-name{font-size:1.8rem !important;font-weight:900 !important;margin-bottom:4px;}"
-        ".account-info-handle{font-size:1.1rem !important;opacity:0.85;margin-bottom:4px;}"
-        ".account-info-id{font-size:0.9rem !important;opacity:0.7;}"
-        ".verified-badge{"
-        "  display:inline-block;background:rgba(255,255,255,0.2);"
-        "  padding:2px 10px;border-radius:12px;font-size:0.9rem;margin-right:8px;}"
-        ".account-info-body{padding:1.5rem 2rem;direction:rtl;}"
-        ".info-grid{"
-        "  display:grid;grid-template-columns:repeat(2,1fr);gap:16px;"
-        "  direction:rtl;}"
-        ".info-item{"
-        "  background:var(--bg-card2);border-radius:12px;"
-        "  padding:12px 16px;border-right:4px solid var(--accent-blue);}"
-        ".info-item-label{"
-        "  font-size:0.85rem !important;color:var(--text-muted) !important;"
-        "  -webkit-text-fill-color:var(--text-muted) !important;"
-        "  font-weight:600;margin-bottom:4px;}"
-        ".info-item-value{"
-        "  font-size:1.1rem !important;color:var(--text-primary) !important;"
-        "  -webkit-text-fill-color:var(--text-primary) !important;"
-        "  font-weight:700;}"
-        # بطاقة VPN
-        ".vpn-card{"
-        "  border-radius:16px !important;padding:1.5rem 2rem !important;"
-        "  margin-bottom:1.5rem !important;direction:rtl !important;"
-        "  text-align:right !important;}"
-        ".vpn-card *{color:#ffffff !important;-webkit-text-fill-color:#ffffff !important;}"
-        ".vpn-title{font-size:1.4rem !important;font-weight:900 !important;margin-bottom:12px;}"
-        ".vpn-indicator{"
-        "  background:rgba(255,255,255,0.15);border-radius:10px;"
-        "  padding:8px 14px;margin:6px 0;font-size:1rem !important;}"
-        # بطاقات عامة
-        ".account-card{"
-        "  background:linear-gradient(135deg,#1DA1F2,#0d47a1) !important;"
-        "  border-radius:16px !important;padding:1.5rem 2rem !important;"
-        "  margin-bottom:1.5rem !important;direction:rtl !important;"
-        "  text-align:right !important;box-shadow:var(--shadow) !important;}"
-        ".account-card *{color:#ffffff !important;-webkit-text-fill-color:#ffffff !important;}"
-        ".account-name{font-size:1.6rem !important;font-weight:900 !important;margin-bottom:4px;}"
-        ".account-username{font-size:1.1rem !important;opacity:0.85;}"
-        ".account-model{font-size:0.9rem !important;opacity:0.7;margin-top:6px;}"
-        ".retweet-tag{"
-        "  display:inline-block;background:rgba(255,255,255,0.25);"
-        "  padding:3px 14px;border-radius:20px;font-size:1rem !important;font-weight:700;margin-top:8px;}"
-        ".profile-risk-card{"
-        "  border-radius:16px !important;padding:1.5rem 2rem !important;"
-        "  margin-bottom:1.2rem !important;direction:rtl !important;"
-        "  text-align:right !important;box-shadow:var(--shadow) !important;}"
-        ".profile-risk-card *{color:#ffffff !important;-webkit-text-fill-color:#ffffff !important;}"
-        ".risk-category-name{font-size:2rem !important;font-weight:900 !important;}"
-        ".risk-level-badge{"
-        "  display:inline-block;padding:4px 16px;border-radius:20px;"
-        "  background:rgba(255,255,255,0.2);font-size:1rem !important;font-weight:700;}"
-        ".score-bar-wrap{margin:6px 0;direction:rtl;}"
-        ".score-label{font-size:1rem !important;font-weight:600 !important;margin-bottom:3px;}"
-        ".score-bar-bg{background:var(--border-color);border-radius:8px;height:14px;width:100%;overflow:hidden;}"
-        ".score-bar-fill{height:14px;border-radius:8px;}"
-        ".summary-card{"
-        "  background:var(--bg-card) !important;border-radius:16px !important;"
-        "  padding:1.8rem 2rem !important;margin-bottom:1.5rem !important;"
-        "  border-right:6px solid var(--accent-blue) !important;"
-        "  direction:rtl !important;text-align:right !important;box-shadow:var(--shadow) !important;}"
-        ".summary-card .section-title{"
-        "  font-size:1.4rem !important;font-weight:900 !important;"
-        "  color:var(--accent-blue) !important;-webkit-text-fill-color:var(--accent-blue) !important;"
-        "  margin-bottom:12px;display:block;}"
-        ".summary-card .summary-text{"
-        "  font-size:1.25rem !important;font-weight:500 !important;"
-        "  color:var(--text-primary) !important;-webkit-text-fill-color:var(--text-primary) !important;"
-        "  line-height:2.0 !important;}"
-        ".points-card{"
-        "  background:var(--bg-card) !important;border-radius:16px !important;"
-        "  padding:1.5rem 1.8rem !important;margin-bottom:1.2rem !important;"
-        "  direction:rtl !important;text-align:right !important;"
-        "  box-shadow:var(--shadow-sm) !important;border-top:4px solid var(--accent-blue);}"
-        ".risks-card{"
-        "  background:var(--bg-card) !important;border-radius:16px !important;"
-        "  padding:1.5rem 1.8rem !important;margin-bottom:1.2rem !important;"
-        "  direction:rtl !important;text-align:right !important;"
-        "  box-shadow:var(--shadow-sm) !important;border-top:4px solid var(--accent-red);}"
-        ".reco-card{"
-        "  background:var(--bg-card) !important;border-radius:16px !important;"
-        "  padding:1.5rem 1.8rem !important;margin-bottom:1.2rem !important;"
-        "  direction:rtl !important;text-align:right !important;"
-        "  box-shadow:var(--shadow-sm) !important;border-top:4px solid var(--accent-green);}"
-        ".meta-card{"
-        "  background:var(--bg-card) !important;border-radius:16px !important;"
-        "  padding:1.5rem 1.8rem !important;margin-bottom:1.2rem !important;"
-        "  direction:rtl !important;text-align:right !important;box-shadow:var(--shadow-sm) !important;}"
-        ".section-title-lg{"
-        "  font-size:1.35rem !important;font-weight:900 !important;"
-        "  color:var(--text-primary) !important;-webkit-text-fill-color:var(--text-primary) !important;"
-        "  margin-bottom:14px;display:block;"
-        "  padding-bottom:8px;border-bottom:2px solid var(--border-color);}"
-        ".point-row{"
-        "  display:flex;align-items:flex-start;gap:12px;"
-        "  padding:12px 0;border-bottom:1px solid var(--border-color);direction:rtl;}"
-        ".point-row:last-child{border-bottom:none;}"
-        ".point-icon{font-size:1.3rem;flex-shrink:0;margin-top:2px;}"
-        ".point-text{"
-        "  font-size:1.15rem !important;font-weight:500 !important;"
-        "  color:var(--text-primary) !important;-webkit-text-fill-color:var(--text-primary) !important;"
-        "  line-height:1.8 !important;}"
-        ".sentiment-value{font-size:1.8rem !important;font-weight:900 !important;margin-top:8px;}"
-        ".sentiment-pos{color:#059669 !important;-webkit-text-fill-color:#059669 !important;}"
-        ".sentiment-neg{color:#dc2626 !important;-webkit-text-fill-color:#dc2626 !important;}"
-        ".sentiment-neu{color:#64748b !important;-webkit-text-fill-color:#64748b !important;}"
-        ".topic-pill{"
-        "  display:inline-block;background:rgba(29,161,242,0.12) !important;"
-        "  color:var(--accent-dark) !important;-webkit-text-fill-color:var(--accent-dark) !important;"
-        "  border:1.5px solid rgba(29,161,242,0.35);"
-        "  padding:6px 16px;border-radius:20px;"
-        "  font-size:1.05rem !important;font-weight:600 !important;margin:4px 3px;}"
-        ".stProgress>div>div{background:linear-gradient(90deg,#1DA1F2,#0d47a1) !important;}"
-        ".streamlit-expanderHeader,.streamlit-expanderHeader *{"
-        "  font-size:1.1rem !important;font-weight:700 !important;"
-        "  color:var(--text-primary) !important;-webkit-text-fill-color:var(--text-primary) !important;"
-        "  direction:rtl !important;text-align:right !important;}"
-        ".stButton>button{"
-        "  direction:rtl !important;font-size:1.1rem !important;font-weight:700 !important;"
-        "  border-radius:12px !important;padding:12px 24px !important;}"
-        ".stAlert p,.stAlert div{color:var(--text-primary) !important;}"
-        "</style>"
-    )
-    st.markdown(css, unsafe_allow_html=True)
+    st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
 
-# ════════════════════════════════════════════════════════════
-# 🖥️  عرض بطاقة معلومات الحساب التفصيلية — جديد v6.6
-# ════════════════════════════════════════════════════════════
+/* ── متغيرات الألوان ── */
+:root {
+    --primary:       #1DA1F2;
+    --primary-dark:  #0d8bd1;
+    --accent:        #F0B429;
+    --success:       #16a34a;
+    --danger:        #dc2626;
+    --warning:       #ea580c;
+    --bg-card:       #ffffff;
+    --bg-section:    #f8fafc;
+    --text-main:     #0f172a;
+    --text-sub:      #334155;
+    --text-muted:    #64748b;
+    --border:        #e2e8f0;
+    --shadow:        0 4px 24px rgba(0,0,0,0.10);
+    --radius:        16px;
+}
+
+/* ── الخط العام ── */
+* { font-family: 'Tajawal', sans-serif !important; box-sizing: border-box; }
+html, body, .stApp { direction: rtl; text-align: right; }
+
+/* ════════════════════════════════════
+   الوضع الليلي (Dark Mode)
+════════════════════════════════════ */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-card:    #1e293b;
+        --bg-section: #0f172a;
+        --text-main:  #f1f5f9;
+        --text-sub:   #cbd5e1;
+        --text-muted: #94a3b8;
+        --border:     #334155;
+        --shadow:     0 4px 24px rgba(0,0,0,0.40);
+    }
+}
+
+/* ── الخلفية العامة ── */
+.stApp {
+    background: var(--bg-section) !important;
+    color: var(--text-main) !important;
+}
+
+/* ════════════════════════════════════
+   الشريط الجانبي - موسّع ومكبّر
+════════════════════════════════════ */
+section[data-testid="stSidebar"] {
+    width: 360px !important;
+    min-width: 360px !important;
+    background: linear-gradient(180deg, #0f2b46 0%, #1a3a5c 50%, #0f2b46 100%) !important;
+    border-left: 3px solid var(--primary) !important;
+    padding: 0 !important;
+}
+section[data-testid="stSidebar"] > div:first-child {
+    padding: 20px 18px !important;
+}
+section[data-testid="stSidebar"] * {
+    color: #ffffff !important;
+    font-size: 17px !important;
+    font-weight: 500 !important;
+}
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+    color: #F0B429 !important;
+    font-size: 20px !important;
+    font-weight: 800 !important;
+}
+section[data-testid="stSidebar"] label {
+    color: #e2e8f0 !important;
+    font-size: 16px !important;
+    font-weight: 600 !important;
+}
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] select,
+section[data-testid="stSidebar"] textarea {
+    background: rgba(255,255,255,0.12) !important;
+    border: 1px solid rgba(255,255,255,0.3) !important;
+    border-radius: 10px !important;
+    color: #ffffff !important;
+    font-size: 16px !important;
+    padding: 10px 14px !important;
+}
+section[data-testid="stSidebar"] .stSelectbox > div > div {
+    background: rgba(255,255,255,0.12) !important;
+    border: 1px solid rgba(255,255,255,0.3) !important;
+    color: #ffffff !important;
+    font-size: 16px !important;
+}
+section[data-testid="stSidebar"] .stCheckbox label {
+    font-size: 16px !important;
+    color: #e2e8f0 !important;
+}
+section[data-testid="stSidebar"] .sidebar-logo {
+    text-align: center;
+    padding: 24px 0 16px;
+    font-size: 52px;
+    line-height: 1;
+}
+section[data-testid="stSidebar"] .sidebar-title {
+    text-align: center;
+    font-size: 24px !important;
+    font-weight: 900 !important;
+    color: #F0B429 !important;
+    margin-bottom: 4px;
+}
+section[data-testid="stSidebar"] .sidebar-version {
+    text-align: center;
+    font-size: 13px !important;
+    color: rgba(255,255,255,0.55) !important;
+    margin-bottom: 20px;
+}
+section[data-testid="stSidebar"] hr {
+    border-color: rgba(255,255,255,0.2) !important;
+    margin: 16px 0 !important;
+}
+section[data-testid="stSidebar"] .limit-table {
+    background: rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 14px !important;
+}
+section[data-testid="stSidebar"] .limit-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    font-size: 14px !important;
+}
+
+/* ════════════════════════════════════
+   عنوان الصفحة الرئيسية
+════════════════════════════════════ */
+.app-header {
+    background: linear-gradient(135deg, #0f2b46 0%, #1DA1F2 50%, #0f2b46 100%);
+    padding: 32px 40px;
+    border-radius: 20px;
+    text-align: center;
+    margin-bottom: 28px;
+    box-shadow: 0 8px 40px rgba(29,161,242,0.3);
+}
+.app-header .title {
+    font-size: 42px !important;
+    font-weight: 900 !important;
+    color: #ffffff !important;
+    letter-spacing: 1px;
+    margin: 0;
+}
+.app-header .subtitle {
+    font-size: 18px !important;
+    color: rgba(255,255,255,0.75) !important;
+    margin-top: 8px;
+}
+.app-header .version-badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.18);
+    color: #F0B429 !important;
+    font-size: 14px !important;
+    font-weight: 700;
+    padding: 4px 14px;
+    border-radius: 20px;
+    margin-top: 10px;
+    border: 1px solid rgba(240,180,41,0.5);
+}
+
+/* ════════════════════════════════════
+   بطاقة بيانات الحساب - v6.7 محدّثة
+════════════════════════════════════ */
+.account-card {
+    background: linear-gradient(135deg, #0f2b46 0%, #1a4a7a 50%, #0d8bd1 100%);
+    border-radius: 20px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
+    box-shadow: 0 8px 40px rgba(29,161,242,0.25);
+    direction: rtl;
+    position: relative;
+    overflow: hidden;
+}
+.account-card::before {
+    content: '';
+    position: absolute;
+    top: -40px; left: -40px;
+    width: 200px; height: 200px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 50%;
+}
+.account-card-header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 20px;
+}
+.account-avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.5);
+    object-fit: cover;
+    flex-shrink: 0;
+}
+.account-avatar-placeholder {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: 3px solid rgba(255,255,255,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+    flex-shrink: 0;
+}
+.account-name {
+    font-size: 26px !important;
+    font-weight: 900 !important;
+    color: #ffffff !important;
+    margin: 0 0 4px 0;
+    line-height: 1.2;
+}
+.account-username {
+    font-size: 18px !important;
+    font-weight: 700 !important;
+    color: #93c5fd !important;
+    margin: 0 0 6px 0;
+}
+/* ── معرّف الحساب ID - v6.7 ── */
+.account-id-badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.18);
+    border: 1px solid rgba(255,255,255,0.35);
+    border-radius: 8px;
+    padding: 5px 14px;
+    font-size: 16px !important;
+    font-weight: 800 !important;
+    color: #ffffff !important;
+    letter-spacing: 0.5px;
+    margin-top: 4px;
+}
+.account-id-badge .id-label {
+    color: #93c5fd !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    margin-left: 6px;
+}
+/* ── شارة التوثيق ── */
+.verified-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(29,161,242,0.3);
+    border: 1px solid rgba(29,161,242,0.6);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    color: #ffffff !important;
+    margin-top: 6px;
+    margin-left: 8px;
+}
+.unverified-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(107,114,128,0.3);
+    border: 1px solid rgba(107,114,128,0.5);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    color: #d1d5db !important;
+    margin-top: 6px;
+    margin-left: 8px;
+}
+/* ── حاوية الإحصائيات ── */
+.account-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 20px 0;
+}
+.stat-box {
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 12px;
+    padding: 14px 10px;
+    text-align: center;
+}
+.stat-box .stat-num {
+    font-size: 26px !important;
+    font-weight: 900 !important;
+    color: #ffffff !important;
+    display: block;
+    line-height: 1.1;
+}
+.stat-box .stat-label {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: rgba(255,255,255,0.65) !important;
+    margin-top: 4px;
+    display: block;
+}
+/* ── تفاصيل الحساب (صف واحد لكل معلومة) ── */
+.account-details-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 16px;
+}
+.detail-item {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.detail-item .detail-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+}
+.detail-item .detail-content {}
+.detail-item .detail-label {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: rgba(255,255,255,0.55) !important;
+    display: block;
+    margin-bottom: 2px;
+}
+.detail-item .detail-value {
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    color: #ffffff !important;
+    display: block;
+}
+/* ── VPN بادج ── */
+.vpn-alert {
+    margin-top: 16px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    font-size: 16px !important;
+    font-weight: 700 !important;
+}
+.vpn-high    { background: rgba(220,38,38,0.25); border: 1px solid rgba(220,38,38,0.5); color: #fca5a5 !important; }
+.vpn-medium  { background: rgba(234,88,12,0.25); border: 1px solid rgba(234,88,12,0.5); color: #fdba74 !important; }
+.vpn-low     { background: rgba(22,163,74,0.20); border: 1px solid rgba(22,163,74,0.4); color: #86efac !important; }
+
+/* ════════════════════════════════════
+   بطاقة الملخص التنفيذي
+════════════════════════════════════ */
+.summary-card {
+    background: linear-gradient(135deg, #1e3a5f 0%, #1a4a7a 100%);
+    border-right: 6px solid var(--primary);
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin-bottom: 20px;
+    direction: rtl;
+    box-shadow: var(--shadow);
+}
+.summary-card .card-title {
+    font-size: 22px !important;
+    font-weight: 900 !important;
+    color: #F0B429 !important;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.summary-card .summary-text {
+    font-size: 18px !important;
+    font-weight: 500 !important;
+    color: #f1f5f9 !important;
+    line-height: 1.9 !important;
+}
+
+/* ════════════════════════════════════
+   نقاط التحليل الرئيسية
+════════════════════════════════════ */
+.section-card {
+    background: var(--bg-card);
+    border-radius: 16px;
+    padding: 22px 26px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    direction: rtl;
+}
+.section-title {
+    font-size: 20px !important;
+    font-weight: 800 !important;
+    color: var(--primary) !important;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 10px;
+}
+.point-item {
+    background: var(--bg-section);
+    border-right: 4px solid var(--primary);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+    font-size: 17px !important;
+    font-weight: 500 !important;
+    color: var(--text-main) !important;
+    line-height: 1.7;
+    direction: rtl;
+}
+/* ── المخاطر ── */
+.risk-item {
+    background: rgba(220,38,38,0.08);
+    border-right: 4px solid #dc2626;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+    font-size: 17px !important;
+    font-weight: 500 !important;
+    color: var(--text-main) !important;
+    line-height: 1.7;
+    direction: rtl;
+}
+/* ── التوصيات ── */
+.rec-item {
+    background: rgba(22,163,74,0.08);
+    border-right: 4px solid #16a34a;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+    font-size: 17px !important;
+    font-weight: 500 !important;
+    color: var(--text-main) !important;
+    line-height: 1.7;
+    direction: rtl;
+}
+
+/* ════════════════════════════════════
+   بطاقة المشاعر
+════════════════════════════════════ */
+.sentiment-card {
+    background: var(--bg-card);
+    border-radius: 16px;
+    padding: 22px 26px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    direction: rtl;
+    text-align: center;
+}
+.sentiment-value {
+    font-size: 36px !important;
+    font-weight: 900 !important;
+    color: var(--primary) !important;
+    display: block;
+    margin: 12px 0;
+}
+.sentiment-score {
+    font-size: 22px !important;
+    font-weight: 800 !important;
+    color: var(--text-sub) !important;
+}
+.sentiment-positive { color: #16a34a !important; }
+.sentiment-negative { color: #dc2626 !important; }
+.sentiment-neutral  { color: #64748b !important; }
+
+/* ════════════════════════════════════
+   الموضوعات
+════════════════════════════════════ */
+.topic-tag {
+    display: inline-block;
+    background: rgba(29,161,242,0.12);
+    color: var(--primary) !important;
+    border: 1px solid rgba(29,161,242,0.35);
+    border-radius: 20px;
+    padding: 6px 16px;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    margin: 4px;
+}
+
+/* ════════════════════════════════════
+   نقاط التحليل للحساب
+════════════════════════════════════ */
+.profile-score-bar {
+    direction: ltr;
+    margin-bottom: 14px;
+}
+.profile-score-label {
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    color: var(--text-main) !important;
+    margin-bottom: 5px;
+    direction: rtl;
+}
+.category-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: 30px;
+    font-size: 20px !important;
+    font-weight: 900 !important;
+    color: #ffffff !important;
+    margin-bottom: 12px;
+}
+
+/* ════════════════════════════════════
+   أزرار وتابات
+════════════════════════════════════ */
+.stButton > button {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%) !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 12px !important;
+    padding: 14px 28px !important;
+    font-size: 18px !important;
+    font-weight: 700 !important;
+    width: 100%;
+    box-shadow: 0 4px 16px rgba(29,161,242,0.35);
+    transition: all 0.2s ease;
+}
+.stButton > button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(29,161,242,0.5) !important;
+}
+.stTabs [role="tab"] {
+    font-size: 17px !important;
+    font-weight: 700 !important;
+    color: var(--text-sub) !important;
+    padding: 12px 20px !important;
+}
+.stTabs [aria-selected="true"] {
+    color: var(--primary) !important;
+    border-bottom: 3px solid var(--primary) !important;
+}
+.stTextInput input, .stTextArea textarea {
+    font-size: 17px !important;
+    font-weight: 500 !important;
+    color: var(--text-main) !important;
+    border-radius: 12px !important;
+    padding: 12px 16px !important;
+    border: 2px solid var(--border) !important;
+    direction: rtl;
+}
+.stTextInput input:focus, .stTextArea textarea:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px rgba(29,161,242,0.15) !important;
+}
+.stProgress > div > div > div {
+    background: linear-gradient(90deg, var(--primary), #0d8bd1) !important;
+    border-radius: 10px !important;
+}
+.status-box {
+    background: rgba(29,161,242,0.08);
+    border: 1px solid rgba(29,161,242,0.25);
+    border-radius: 12px;
+    padding: 12px 18px;
+    font-size: 16px !important;
+    color: var(--primary) !important;
+    font-weight: 600 !important;
+    margin-bottom: 12px;
+    direction: rtl;
+}
+
+/* ════════════════════════════════════
+   وضع إجباري لألوان النصوص
+════════════════════════════════════ */
+p, span, li, div, h1, h2, h3, h4, h5, h6, label, td, th {
+    color: var(--text-main);
+}
+.stMarkdown p { font-size: 16px !important; line-height: 1.8; }
+.stAlert p, .stAlert div { color: var(--text-main) !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# عرض بطاقة بيانات الحساب - v6.7 محدّثة
+# ═══════════════════════════════════════════════════════════════
 def display_account_info_card(account_data: Dict):
-    display_name = account_data.get("display_name", "غير معروف")
     username     = account_data.get("username", "")
+    display_name = account_data.get("display_name", username)
     user_id      = account_data.get("user_id", "")
-    verified     = account_data.get("verified", False)
-    joined       = account_data.get("joined_date", "")
-    location     = account_data.get("location", "")
-    country      = account_data.get("country", "")
-    connected    = account_data.get("connected_via", "")
-    followers    = account_data.get("followers", "")
-    following    = account_data.get("following", "")
-    tweets_count = account_data.get("tweets_count", "")
     bio          = account_data.get("bio", "")
-    is_private   = account_data.get("is_private", False)
+    location     = account_data.get("location", "غير محدد")
+    country      = account_data.get("country", "")
+    joined_date  = account_data.get("joined_date", "غير محدد")
+    verified     = account_data.get("verified", False)
+    protected    = account_data.get("protected", False)
+    followers    = account_data.get("followers", 0)
+    following    = account_data.get("following", 0)
+    tweets_count = account_data.get("tweets_count", 0)
+    profile_img  = account_data.get("profile_image", "")
+    connected_via= account_data.get("connected_via", "")
     vpn_info     = account_data.get("vpn_info", {})
-    pinned       = account_data.get("pinned_tweet", "")
 
-    verified_html = '<span class="verified-badge">✅ موثّق</span>' if verified else ""
-    private_html  = '<span class="verified-badge">🔒 خاص</span>' if is_private else ""
+    # ── تنسيق الأرقام ──
+    def fmt(n):
+        if n >= 1_000_000:
+            return f"{n/1_000_000:.1f}M"
+        if n >= 1_000:
+            return f"{n/1_000:.1f}K"
+        return str(n)
 
-    # ── رأس البطاقة ──────────────────────────────────────
-    header_html = (
-        '<div class="account-info-card">'
-        '<div class="account-info-header">'
-        '<div class="account-info-name">' + display_name + verified_html + private_html + "</div>"
-        '<div class="account-info-handle">' + username + "</div>"
-        + ('<div class="account-info-id">🔢 User ID: <code style="background:rgba(255,255,255,0.2);'
-           'padding:2px 8px;border-radius:6px;color:#fff;">' + user_id + "</code></div>" if user_id else "")
-        + "</div>"
-    )
+    # ── Avatar ──
+    if profile_img:
+        avatar_html = f'<img src="{profile_img}" class="account-avatar" onerror="this.style.display=\'none\'">'
+    else:
+        avatar_html = '<div class="account-avatar-placeholder">👤</div>'
 
-    # ── شبكة المعلومات ──────────────────────────────────
-    def info_item(icon, label, value, border_color="#1DA1F2"):
-        if not value:
-            return ""
-        return (
-            '<div class="info-item" style="border-right-color:' + border_color + ';">'
-            '<div class="info-item-label">' + icon + " " + label + "</div>"
-            '<div class="info-item-value">' + str(value) + "</div>"
-            "</div>"
+    # ── شارة التوثيق ──
+    if verified:
+        verification_html = '<span class="verified-badge">✅ حساب موثَّق</span>'
+    else:
+        verification_html = '<span class="unverified-badge">⚪ غير موثَّق</span>'
+
+    # ── شارة الحماية ──
+    protected_html = ""
+    if protected:
+        protected_html = '<span class="unverified-badge" style="border-color:rgba(240,180,41,0.5);color:#F0B429!important;">🔒 محمي</span>'
+
+    # ── معرّف الحساب ──
+    id_html = ""
+    if user_id:
+        id_html = f'''
+        <div class="account-id-badge">
+            <span class="id-label">🪪 معرّف الحساب:</span>
+            <span style="color:#ffffff!important;font-size:16px!important;font-weight:800!important;">{user_id}</span>
+        </div>'''
+
+    # ── حاوية الإحصائيات الثلاثية ──
+    stats_html = f"""
+    <div class="account-stats-grid">
+        <div class="stat-box">
+            <span class="stat-num">{fmt(followers)}</span>
+            <span class="stat-label">👥 المتابعون</span>
+        </div>
+        <div class="stat-box">
+            <span class="stat-num">{fmt(following)}</span>
+            <span class="stat-label">➡️ يتابع</span>
+        </div>
+        <div class="stat-box">
+            <span class="stat-num">{fmt(tweets_count)}</span>
+            <span class="stat-label">📝 المنشورات</span>
+        </div>
+    </div>"""
+
+    # ── تفاصيل الحساب ──
+    display_country = country if country else (location if location != "غير محدد" else "غير محدد")
+    details_html = f"""
+    <div class="account-details-grid">
+        <div class="detail-item">
+            <span class="detail-icon">📅</span>
+            <div class="detail-content">
+                <span class="detail-label">تاريخ الانضمام</span>
+                <span class="detail-value">{joined_date}</span>
+            </div>
+        </div>
+        <div class="detail-item">
+            <span class="detail-icon">📍</span>
+            <div class="detail-content">
+                <span class="detail-label">الحساب موجود في</span>
+                <span class="detail-value">{display_country}</span>
+            </div>
+        </div>
+        <div class="detail-item">
+            <span class="detail-icon">🔗</span>
+            <div class="detail-content">
+                <span class="detail-label">مصدر البيانات</span>
+                <span class="detail-value" style="font-size:13px!important;">{connected_via.replace("https://","") if connected_via else "غير متاح"}</span>
+            </div>
+        </div>
+        <div class="detail-item">
+            <span class="detail-icon">📊</span>
+            <div class="detail-content">
+                <span class="detail-label">نسبة المتابعة</span>
+                <span class="detail-value">{round(followers/max(following,1),1)}x</span>
+            </div>
+        </div>
+    </div>"""
+
+    # ── VPN ──
+    vpn_html = ""
+    if vpn_info:
+        risk = vpn_info.get("risk_level", "منخفض")
+        detected = vpn_info.get("detected", False)
+        indicators = vpn_info.get("indicators", [])
+        css_class = {"عالٍ": "vpn-high", "متوسط": "vpn-medium"}.get(risk, "vpn-low")
+        vpn_icon  = "🔴" if risk == "عالٍ" else ("🟠" if risk == "متوسط" else "🟢")
+        ind_text  = " | ".join(indicators[:2]) if indicators else "لا توجد مؤشرات"
+        vpn_html  = f"""
+        <div class="vpn-alert {css_class}">
+            {vpn_icon} كاشف VPN — خطورة: <strong>{risk}</strong>
+            {"✅ لا يُرجَّح استخدام VPN" if not detected else "⚠️ يُرجَّح استخدام VPN"}
+            <br><small style="font-size:13px!important;opacity:0.8;">{ind_text}</small>
+        </div>"""
+
+    # ── البناء الكامل ──
+    card_html = f"""
+    <div class="account-card">
+        <div class="account-card-header">
+            {avatar_html}
+            <div style="flex:1;">
+                <div class="account-name">{display_name}</div>
+                <div class="account-username">@{username}</div>
+                {id_html}
+                <div style="margin-top:8px;">
+                    {verification_html}
+                    {protected_html}
+                </div>
+            </div>
+        </div>
+        {f'<p style="font-size:16px!important;color:rgba(255,255,255,0.8)!important;margin:0 0 16px;line-height:1.7;">{bio}</p>' if bio else ""}
+        {stats_html}
+        {details_html}
+        {vpn_html}
+    </div>"""
+
+    st.markdown(card_html, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# عرض نتائج التحليل
+# ═══════════════════════════════════════════════════════════════
+def display_analysis_results(analysis: Dict, username: str = ""):
+    if "error" in analysis:
+        st.error(f"❌ {analysis['error']}")
+        return
+
+    model_used = analysis.get("_model_used", "")
+    if model_used and not analysis.get("_raw"):
+        st.markdown(
+            f'<div class="status-box">🤖 تم التحليل بواسطة: <strong>{model_used}</strong></div>',
+            unsafe_allow_html=True
         )
 
-    grid_items = (
-        info_item("📅", "تاريخ الانضمام",     joined,       "#1DA1F2") +
-        info_item("📍", "الموقع المُعلن",      location,     "#059669") +
-        info_item("🌍", "الدولة المرصودة",     country,      "#7c3aed") +
-        info_item("📱", "متصل عبر",           connected,    "#d97706") +
-        info_item("👥", "المتابعون",           followers,    "#0891b2") +
-        info_item("➡️", "يتابع",              following,    "#0891b2") +
-        info_item("📝", "عدد المنشورات",       tweets_count, "#be185d") +
-        info_item("💬", "السيرة الذاتية",      bio,          "#64748b")
-    )
+    # ── ملخص تنفيذي ──
+    summary = analysis.get("executive_summary", "")
+    if summary:
+        st.markdown(f"""
+        <div class="summary-card">
+            <div class="card-title">📋 الملخص التنفيذي</div>
+            <p class="summary-text">{summary}</p>
+        </div>""", unsafe_allow_html=True)
 
-    body_html = (
-        '<div class="account-info-body">'
-        '<div class="info-grid">' + grid_items + "</div>"
-        + (
-            '<div style="margin-top:16px;padding:12px 16px;background:var(--bg-card2);'
-            'border-radius:12px;border-right:4px solid #d97706;">'
-            '<div class="info-item-label">📌 المنشور المثبّت</div>'
-            '<div class="point-text">' + pinned + "</div></div>"
-            if pinned else ""
-        )
-        + "</div></div>"
-    )
-
-    st.markdown(header_html + body_html, unsafe_allow_html=True)
-
-    # ── بطاقة VPN ────────────────────────────────────────
-    vpn_risk  = vpn_info.get("vpn_risk_level", "منخفض")
-    vpn_score = vpn_info.get("vpn_score", 0)
-    vpn_inds  = vpn_info.get("vpn_indicators", [])
-    likely    = vpn_info.get("likely_using_vpn", False)
-
-    vpn_colors = {"عالي": "#7f1d1d", "متوسط": "#92400e", "منخفض": "#064e3b"}
-    vpn_color  = vpn_colors.get(vpn_risk, "#334155")
-    vpn_icon   = "🔴" if vpn_risk == "عالي" else "🟡" if vpn_risk == "متوسط" else "🟢"
-
-    indicators_html = "".join(
-        '<div class="vpn-indicator">⚠️ ' + ind + "</div>"
-        for ind in vpn_inds
-    ) if vpn_inds else '<div class="vpn-indicator">✅ لم يتم رصد مؤشرات VPN واضحة</div>'
-
-    st.markdown(
-        '<div class="vpn-card" style="background:linear-gradient(135deg,' + vpn_color + ',#1e293b);">'
-        '<div class="vpn-title">' + vpn_icon + " كاشف VPN / البروكسي</div>"
-        '<div style="font-size:1.2rem;font-weight:700;margin-bottom:10px;">'
-        "مستوى الاحتمال: " + vpn_risk + " | نقاط: " + str(vpn_score) + "/10 | "
-        + ("🚨 يُرجَّح استخدام VPN" if likely else "✅ لا يُرجَّح استخدام VPN")
-        + "</div>"
-        + indicators_html
-        + "</div>",
-        unsafe_allow_html=True
-    )
-
-def display_analysis_results(analysis: Dict, tweet_data: Dict):
-    author   = tweet_data.get("author", "")
-    username = tweet_data.get("username", "") or tweet_data.get("url_username", "")
-    is_rt    = tweet_data.get("is_retweet", False)
-    model    = analysis.get("_model_used", "")
-
-    rt_tag   = '<span class="retweet-tag">🔁 إعادة نشر</span>' if is_rt else ""
-    mdl_line = '<div class="account-model">🤖 نموذج: ' + model + "</div>" if model else ""
-    st.markdown(
-        '<div class="account-card">'
-        '<div class="account-name">🐦 ' + author + "</div>"
-        + ('<div class="account-username">' + username + "</div>" if username else "")
-        + rt_tag + mdl_line + "</div>",
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        '<div class="summary-card">'
-        '<span class="section-title">📋 الملخص التنفيذي</span>'
-        '<div class="summary-text">' + analysis.get("executive_summary", "—") + "</div></div>",
-        unsafe_allow_html=True
-    )
-    kp_rows = "".join(
-        '<div class="point-row"><span class="point-icon">🔹</span>'
-        '<span class="point-text">' + pt + "</span></div>"
-        for pt in analysis.get("key_points", [])
-    )
-    st.markdown(
-        '<div class="points-card"><span class="section-title-lg">🎯 النقاط الرئيسية</span>'
-        + kp_rows + "</div>",
-        unsafe_allow_html=True
-    )
+    # ── نقاط رئيسية + مخاطر + توصيات ──
     col1, col2 = st.columns(2)
     with col1:
-        risk_rows = "".join(
-            '<div class="point-row"><span class="point-icon">🔴</span>'
-            '<span class="point-text">' + r + "</span></div>"
-            for r in analysis.get("risks", [])
-        )
-        st.markdown(
-            '<div class="risks-card"><span class="section-title-lg">⚠️ المخاطر</span>'
-            + risk_rows + "</div>",
-            unsafe_allow_html=True
-        )
+        points = analysis.get("key_points", [])
+        if points:
+            items_html = "".join(f'<div class="point-item">🔹 {p}</div>' for p in points)
+            st.markdown(f"""
+            <div class="section-card">
+                <div class="section-title">🎯 النقاط الرئيسية</div>
+                {items_html}
+            </div>""", unsafe_allow_html=True)
+
     with col2:
-        rec_rows = "".join(
-            '<div class="point-row"><span class="point-icon">✅</span>'
-            '<span class="point-text">' + rec + "</span></div>"
-            for rec in analysis.get("recommendations", [])
-        )
-        st.markdown(
-            '<div class="reco-card"><span class="section-title-lg">💡 التوصيات</span>'
-            + rec_rows + "</div>",
-            unsafe_allow_html=True
-        )
-    col3, col4 = st.columns(2)
-    sentiment = analysis.get("sentiment", "محايد")
-    sent_cls  = (
-        "sentiment-pos" if "ايجاب" in sentiment or "إيجاب" in sentiment
-        else "sentiment-neg" if "سلب" in sentiment
-        else "sentiment-neu"
-    )
-    with col3:
-        st.markdown(
-            '<div class="meta-card"><span class="section-title-lg">💬 المشاعر العامة</span>'
-            '<div class="sentiment-value ' + sent_cls + '">' + sentiment + "</div></div>",
-            unsafe_allow_html=True
-        )
-    with col4:
-        topics_html = "".join(
-            '<span class="topic-pill">' + t + "</span>"
-            for t in analysis.get("topics", [])
-        )
-        st.markdown(
-            '<div class="meta-card"><span class="section-title-lg">🏷️ الموضوعات</span>'
-            '<div style="margin-top:10px;">' + topics_html + "</div></div>",
-            unsafe_allow_html=True
-        )
+        risks = analysis.get("risks", [])
+        if risks:
+            items_html = "".join(f'<div class="risk-item">⚠️ {r}</div>' for r in risks)
+            st.markdown(f"""
+            <div class="section-card">
+                <div class="section-title" style="color:#dc2626!important;">⚠️ المخاطر</div>
+                {items_html}
+            </div>""", unsafe_allow_html=True)
 
-def display_profile_analysis(profile_analysis: Dict, profile_data: Dict):
-    cat_key   = profile_analysis.get("primary_category", "محايد")
-    cat_info  = ACCOUNT_CATEGORIES.get(cat_key, {"icon": "⬜", "color": "#64748b", "desc": ""})
-    risk_lvl  = profile_analysis.get("risk_level", "منخفض")
-    risk_score = profile_analysis.get("risk_score", 0)
-    sec_cat   = profile_analysis.get("secondary_category", "")
-    risk_colors = {"عالي": "#dc2626", "متوسط": "#d97706", "منخفض": "#059669"}
-    risk_color  = risk_colors.get(risk_lvl, "#64748b")
+    recs = analysis.get("recommendations", [])
+    if recs:
+        items_html = "".join(f'<div class="rec-item">✅ {r}</div>' for r in recs)
+        st.markdown(f"""
+        <div class="section-card">
+            <div class="section-title" style="color:#16a34a!important;">💡 التوصيات</div>
+            {items_html}
+        </div>""", unsafe_allow_html=True)
 
-    sec_html = (
-        '<div style="margin-top:8px;opacity:0.85;font-size:1rem;">تصنيف ثانوي: ' + sec_cat + "</div>"
-        if sec_cat else ""
-    )
-    st.markdown(
-        '<div class="profile-risk-card" style="background:linear-gradient(135deg,'
-        + cat_info["color"] + "," + risk_color + ');">'
-        '<div style="font-size:3rem;">' + cat_info["icon"] + "</div>"
-        '<div class="risk-category-name">' + cat_key + "</div>"
-        '<div style="font-size:1rem;opacity:0.85;margin-top:4px;">' + cat_info["desc"] + "</div>"
-        + sec_html
-        + '<div style="margin-top:12px;">'
-        '<span class="risk-level-badge">مستوى الخطر: ' + risk_lvl
-        + " | نقاط: " + str(risk_score) + "/10</span></div></div>",
-        unsafe_allow_html=True
-    )
+    # ── المشاعر ──
+    sentiment = analysis.get("sentiment", "")
+    score     = analysis.get("sentiment_score", 0)
+    urgency   = analysis.get("urgency_level", "")
+    credibility = analysis.get("credibility_score", 0)
+    if sentiment:
+        sent_class = (
+            "sentiment-positive" if "إيجابي" in sentiment else
+            "sentiment-negative" if "سلبي"   in sentiment else
+            "sentiment-neutral"
+        )
+        sent_icon = "😊" if "إيجابي" in sentiment else ("😟" if "سلبي" in sentiment else "😐")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"""
+            <div class="sentiment-card">
+                <div class="section-title" style="justify-content:center;">🎭 المشاعر العامة</div>
+                <span class="sentiment-value {sent_class}">{sent_icon} {sentiment}</span>
+                <span class="sentiment-score">نسبة: {score}%</span>
+            </div>""", unsafe_allow_html=True)
+        with col2:
+            urgency_color = "#dc2626" if urgency == "عالٍ" else ("#ea580c" if urgency == "متوسط" else "#16a34a")
+            st.markdown(f"""
+            <div class="sentiment-card">
+                <div class="section-title" style="justify-content:center;">🚨 مستوى الإلحاح</div>
+                <span class="sentiment-value" style="color:{urgency_color}!important;">{urgency}</span>
+            </div>""", unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"""
+            <div class="sentiment-card">
+                <div class="section-title" style="justify-content:center;">🔍 المصداقية</div>
+                <span class="sentiment-value">{credibility}%</span>
+            </div>""", unsafe_allow_html=True)
 
-    scores = profile_analysis.get("scores", {})
+    # ── الموضوعات ──
+    topics = analysis.get("topics", [])
+    if topics:
+        tags_html = "".join(f'<span class="topic-tag">{t}</span>' for t in topics)
+        st.markdown(f"""
+        <div class="section-card">
+            <div class="section-title">🏷️ الموضوعات</div>
+            <div style="direction:rtl;">{tags_html}</div>
+        </div>""", unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# عرض نتائج تحليل الملف الشخصي
+# ═══════════════════════════════════════════════════════════════
+def display_profile_analysis(profile_analysis: Dict):
+    if "error" in profile_analysis:
+        st.error(f"❌ {profile_analysis['error']}")
+        return
+
+    category = profile_analysis.get("primary_category", "محايد")
+    cat_info  = ACCOUNT_CATEGORIES.get(category, {"icon": "⚪", "color": "#6b7280", "desc": ""})
+    risk      = profile_analysis.get("risk_level", "")
+    summary   = profile_analysis.get("summary", "")
+    scores    = profile_analysis.get("scores", {})
+    patterns  = profile_analysis.get("patterns", [])
+    recs      = profile_analysis.get("recommendations", [])
+    origin    = profile_analysis.get("origin_guess", "")
+    influence = profile_analysis.get("influence_level", "")
+    model     = profile_analysis.get("_model_used", "")
+
+    st.markdown(f"""
+    <div class="section-card">
+        <div class="section-title">🎯 تحليل طبيعة الحساب</div>
+        <div style="text-align:center;margin-bottom:16px;">
+            <span class="category-badge" style="background:{cat_info['color']};">
+                {cat_info['icon']} {category}
+            </span>
+            <p style="font-size:16px!important;color:var(--text-sub)!important;margin:8px 0;">{cat_info['desc']}</p>
+        </div>
+        {f'<div class="summary-card"><p class="summary-text">{summary}</p></div>' if summary else ""}
+    </div>""", unsafe_allow_html=True)
+
     if scores:
-        score_colors = {
-            "عدائية": "#dc2626", "تهكم": "#be185d", "استنجاد": "#0891b2",
-            "تدخل_خارجي": "#7f1d1d", "دعم_وطني": "#059669", "اعلامي": "#7c3aed",
-        }
+        st.markdown('<div class="section-card"><div class="section-title">📊 مؤشرات التقييم</div>', unsafe_allow_html=True)
         score_labels = {
-            "عدائية": "عدائية تجاه القيادة", "تهكم": "تهكم وسخرية",
-            "استنجاد": "استنجاد وشكاوى", "تدخل_خارجي": "تدخل خارجي",
-            "دعم_وطني": "دعم وطني", "اعلامي": "نشاط إعلامي",
+            "hostility":             ("🔴 مستوى العدائية",  "#dc2626"),
+            "authenticity":          ("✅ الأصالة",          "#16a34a"),
+            "influence":             ("📢 التأثير",          "#2563eb"),
+            "external_interference": ("🌐 التدخل الخارجي",  "#be185d"),
         }
-        bars_html = "".join(
-            '<div class="score-bar-wrap">'
-            '<div class="score-label">' + score_labels.get(k, k) + ": " + str(v) + "/10</div>"
-            '<div class="score-bar-bg"><div class="score-bar-fill" style="width:'
-            + str(min(int(v) * 10, 100)) + "%;background:" + score_colors.get(k, "#1DA1F2") + ';"></div></div>'
-            "</div>"
-            for k, v in scores.items()
-        )
-        st.markdown(
-            '<div class="points-card"><span class="section-title-lg">📊 مقاييس التقييم</span>'
-            + bars_html + "</div>",
-            unsafe_allow_html=True
-        )
-
-    st.markdown(
-        '<div class="summary-card">'
-        '<span class="section-title">🧠 ملخص طبيعة الحساب</span>'
-        '<div class="summary-text">' + profile_analysis.get("profile_summary", "—") + "</div></div>",
-        unsafe_allow_html=True
-    )
-
-    vpn_assess = profile_analysis.get("vpn_assessment", "")
-    if vpn_assess:
-        st.markdown(
-            '<div class="meta-card"><span class="section-title-lg">🔐 تقييم VPN</span>'
-            '<div class="point-text">' + vpn_assess + "</div></div>",
-            unsafe_allow_html=True
-        )
+        for key, val in scores.items():
+            label, color = score_labels.get(key, (key, "#1DA1F2"))
+            st.markdown(f'<div class="profile-score-label">{label}: {val}%</div>', unsafe_allow_html=True)
+            st.progress(min(int(val), 100) / 100)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
     with col1:
-        pattern_rows = "".join(
-            '<div class="point-row"><span class="point-icon">🔍</span>'
-            '<span class="point-text">' + p + "</span></div>"
-            for p in profile_analysis.get("behavioral_patterns", [])
-        )
-        st.markdown(
-            '<div class="points-card"><span class="section-title-lg">🔄 الأنماط السلوكية</span>'
-            + pattern_rows + "</div>",
-            unsafe_allow_html=True
-        )
+        if patterns:
+            items = "".join(f'<div class="point-item">🔹 {p}</div>' for p in patterns)
+            st.markdown(f'<div class="section-card"><div class="section-title">🔍 الأنماط المرصودة</div>{items}</div>', unsafe_allow_html=True)
     with col2:
-        rec_rows = "".join(
-            '<div class="point-row"><span class="point-icon">📌</span>'
-            '<span class="point-text">' + r + "</span></div>"
-            for r in profile_analysis.get("recommendations", [])
-        )
-        st.markdown(
-            '<div class="reco-card"><span class="section-title-lg">📋 توصيات للمحلل</span>'
-            + rec_rows + "</div>",
-            unsafe_allow_html=True
-        )
+        if recs:
+            items = "".join(f'<div class="rec-item">✅ {r}</div>' for r in recs)
+            st.markdown(f'<div class="section-card"><div class="section-title">💡 التوصيات</div>{items}</div>', unsafe_allow_html=True)
 
-    col3, col4 = st.columns(2)
-    with col3:
-        topics_html = "".join(
-            '<span class="topic-pill">' + t + "</span>"
-            for t in profile_analysis.get("key_topics", [])
-        )
-        st.markdown(
-            '<div class="meta-card"><span class="section-title-lg">🏷️ الموضوعات الرئيسية</span>'
-            '<div style="margin-top:10px;">' + topics_html + "</div></div>",
-            unsafe_allow_html=True
-        )
-    with col4:
-        origin  = profile_analysis.get("account_origin_guess", "غير محدد")
-        influ   = profile_analysis.get("influence_level", "منخفض")
-        influ_c = {"عالي": "#dc2626", "متوسط": "#d97706", "منخفض": "#059669"}.get(influ, "#64748b")
-        st.markdown(
-            '<div class="meta-card"><span class="section-title-lg">🌍 معلومات إضافية</span>'
-            '<div class="point-row"><span class="point-icon">🗺️</span>'
-            '<span class="point-text">المنشأ المرجّح: <b>' + origin + "</b></span></div>"
-            '<div class="point-row"><span class="point-icon">📡</span>'
-            '<span class="point-text">مستوى التأثير: <b style="color:'
-            + influ_c + '">' + influ + "</b></span></div></div>",
-            unsafe_allow_html=True
-        )
+    extra_info = []
+    if origin:    extra_info.append(f"🌍 الدولة المحتملة: <strong>{origin}</strong>")
+    if influence: extra_info.append(f"📢 مستوى التأثير: <strong>{influence}</strong>")
+    if risk:      extra_info.append(f"⚡ مستوى الخطورة: <strong>{risk}</strong>")
+    if model:     extra_info.append(f"🤖 النموذج: <strong>{model}</strong>")
+    if extra_info:
+        content = " &nbsp;|&nbsp; ".join(extra_info)
+        st.markdown(f'<div class="status-box" style="font-size:15px!important;">{content}</div>', unsafe_allow_html=True)
 
-    recent = profile_data.get("recent_tweets", [])
-    if recent:
-        with st.expander("📜 أحدث منشورات الحساب (" + str(len(recent)) + ")", expanded=False):
-            for i, tw in enumerate(recent, 1):
-                st.markdown(
-                    '<div class="point-row"><span class="point-icon">' + str(i) + ".</span>"
-                    '<span class="point-text">' + tw + "</span></div>",
-                    unsafe_allow_html=True
-                )
-
-# ════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# الواجهة الرئيسية
+# ═══════════════════════════════════════════════════════════════
 def main():
     st.set_page_config(
-        page_title=APP_EMOJI + " " + APP_NAME,
+        page_title=f"{APP_NAME} {APP_EMOJI}",
         page_icon=APP_EMOJI,
         layout="wide",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="expanded",
     )
     inject_css()
-    st.markdown('<h1 class="app-title">' + APP_EMOJI + " " + APP_NAME + "</h1>", unsafe_allow_html=True)
-    st.markdown(
-        '<p class="app-subtitle">تحليل منشورات X + استخراج بيانات الحسابات | v' + APP_VERSION + "</p>",
-        unsafe_allow_html=True
-    )
 
+    # ══════════════════════════════
+    # الشريط الجانبي
+    # ══════════════════════════════
     with st.sidebar:
-        st.markdown("### ⚙️ الإعدادات")
+        st.markdown(f"""
+        <div class="sidebar-logo">{APP_EMOJI}</div>
+        <div class="sidebar-title">{APP_NAME}</div>
+        <div class="sidebar-version">الإصدار {APP_VERSION} — تحليل استخباراتي</div>
+        <hr>
+        """, unsafe_allow_html=True)
+
         api_key = st.text_input(
-            "🔑 مفتاح Gemini API", type="password",
-            help="من: https://aistudio.google.com/apikey",
-            placeholder="AIzaSy..."
+            "🔑 مفتاح Gemini API",
+            type="password",
+            placeholder="AIza...",
+            help="احصل على مفتاح مجاني من aistudio.google.com/apikey"
         )
-        st.markdown("---")
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("**⚙️ إعدادات التحليل**")
+
         analysis_mode = st.selectbox(
             "🎯 وضع التحليل",
-            ["executive", "media", "security", "general"],
+            options=["executive", "media", "security", "general"],
             format_func=lambda x: {
-                "executive": "📊 تنفيذي", "media": "📣 إعلامي",
-                "security": "🔒 أمني",    "general": "🌐 عام"
-            }.get(x, x)
+                "executive": "📋 تنفيذي - شامل",
+                "media":     "📰 إعلامي - تحقق",
+                "security":  "🔒 أمني - مخاطر",
+                "general":   "🔍 عام",
+            }[x]
         )
-        st.markdown("---")
-        enable_ocr     = st.checkbox("🖼️ تحليل الصور (OCR)",    value=True)
-        enable_video   = st.checkbox("🎬 تحليل الفيديو",         value=False)
-        improve_text   = st.checkbox("✨ تحسين النص العربي",     value=False)
-        enable_profile = st.checkbox("🕵️ تحليل ملف الحساب",     value=True)
-        enable_vpn     = st.checkbox("🔐 كاشف VPN",              value=True)
-        st.markdown("---")
-        st.markdown("#### 📊 حدود الاستخدام المجاني")
-        st.info(
-            "🥇 gemini-1.5-flash\n15 طلب/دقيقة | 1,500 طلب/يوم\n\n"
-            "⚡ gemini-2.5-flash\n10 طلبات/دقيقة | 250 طلب/يوم"
-        )
-        st.caption("v" + APP_VERSION + " | oEmbed + Nitter + Gemini")
 
+        enable_ocr       = st.checkbox("🔤 تفعيل OCR (تحليل الصور)", value=False)
+        enable_video     = st.checkbox("🎥 تفعيل تحليل الفيديو",    value=False)
+        enable_profile   = st.checkbox("👤 تحليل ملف الحساب",       value=True)
+        improve_arabic   = st.checkbox("✍️ تحسين النص العربي",      value=False)
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("**📊 حدود الاستخدام المجاني**")
+        st.markdown("""
+        <div class="limit-table">
+            <div class="limit-row"><span>gemini-1.5-flash ⭐</span><span>15 RPM</span></div>
+            <div class="limit-row"><span>gemini-1.5-flash-8b</span><span>15 RPM</span></div>
+            <div class="limit-row"><span>gemini-2.5-flash</span><span>10 RPM</span></div>
+            <div class="limit-row"><span>gemini-2.5-pro</span><span>5 RPM</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style="text-align:center;font-size:13px!important;color:rgba(255,255,255,0.4)!important;">
+        🔐 بياناتك محمية<br>لا يتم تخزين أي معلومات
+        </div>""", unsafe_allow_html=True)
+
+    # ══════════════════════════════
+    # العنوان الرئيسي
+    # ══════════════════════════════
+    st.markdown(f"""
+    <div class="app-header">
+        <div class="title">{APP_EMOJI} {APP_NAME}</div>
+        <div class="subtitle">منصة التحليل الاستخباراتي لمنشورات X (تويتر)</div>
+        <span class="version-badge">الإصدار {APP_VERSION}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ══════════════════════════════
+    # التابات
+    # ══════════════════════════════
     tab_link, tab_profile, tab_img, tab_guide = st.tabs([
-        "🔗 تحليل منشور", "🕵️ تحليل حساب", "🖼️ تحليل صورة", "📖 دليل"
+        "🔗 تحليل المنشور",
+        "👤 تحليل الحساب",
+        "🖼️ تحليل الصورة",
+        "📖 دليل الاستخدام",
     ])
 
-    # ══════════════════════════════════════════════════════
+    # ────────────────────────────────────────────
+    # تبويب 1 – تحليل المنشور
+    # ────────────────────────────────────────────
     with tab_link:
-        st.markdown("### 🔗 تحليل منشور X")
-        col_a, col_b = st.columns([3, 2])
-        with col_a:
-            tweet_url_input = st.text_input(
-                "🔗 رابط المنشور",
-                placeholder="https://x.com/username/status/123456789"
-            )
-        with col_b:
-            profile_url_input = st.text_input(
-                "👤 رابط الحساب (اختياري)",
-                placeholder="https://x.com/username"
-            )
+        st.markdown("### 🔗 تحليل منشور من X")
+        tweet_url_input = st.text_input(
+            "رابط المنشور",
+            placeholder="https://x.com/username/status/1234567890",
+            label_visibility="collapsed"
+        )
 
-        if tweet_url_input:
-            if is_tweet_url(tweet_url_input):
-                tid   = extract_tweet_id(tweet_url_input)
-                uname = extract_username_from_url(tweet_url_input)
-                st.success("✅ رابط صالح | الحساب: " + uname + " | المعرّف: " + str(tid))
+        col_btn1, col_btn2 = st.columns([3, 1])
+        with col_btn1:
+            analyze_btn = st.button("🚀 بدء التحليل", key="analyze_tweet")
+        with col_btn2:
+            clear_btn = st.button("🗑️ مسح", key="clear_tweet")
+
+        if clear_btn:
+            st.rerun()
+
+        if analyze_btn:
+            if not api_key:
+                st.error("❌ يرجى إدخال مفتاح Gemini API في الشريط الجانبي")
+            elif not tweet_url_input.strip():
+                st.warning("⚠️ يرجى إدخال رابط المنشور")
+            elif not is_tweet_url(tweet_url_input.strip()):
+                st.error("❌ الرابط غير صحيح. يجب أن يكون رابط منشور X صحيحاً")
             else:
-                st.error("❌ الرابط غير مدعوم")
+                tweet_url = normalize_tweet_url(tweet_url_input.strip())
+                tweet_id  = extract_tweet_id(tweet_url)
+                username  = extract_username_from_url(tweet_url) or "unknown"
 
-        if st.button("🔍 تحليل المنشور + الحساب", type="primary", use_container_width=True):
-            if not tweet_url_input or not is_tweet_url(tweet_url_input):
-                st.error("❌ أدخل رابط منشور صالح")
-            elif not api_key:
-                st.error("❌ أدخل مفتاح Gemini API")
-            else:
-                status_box = st.empty()
-                progress   = st.progress(0)
-                log_exp    = st.expander("📋 سجل التنفيذ", expanded=False)
-                log_lines: List[str] = []
+                progress = st.progress(0)
+                status   = st.empty()
 
-                def upd(msg):
-                    status_box.info("⏳ " + msg)
-                    log_lines.append(msg)
-                    with log_exp:
-                        st.text("\n".join(log_lines[-10:]))
+                def update_status(msg):
+                    status.markdown(f'<div class="status-box">{msg}</div>', unsafe_allow_html=True)
 
-                progress.progress(10)
-                upd("جارٍ جلب بيانات المنشور...")
-                tweet_data = fetch_tweet_with_media(tweet_url_input, api_key, upd)
-                progress.progress(30)
+                # ── جلب البيانات ──
+                update_status("📡 جاري جلب بيانات المنشور...")
+                progress.progress(15)
+                tweet_data = fetch_tweet_with_media(tweet_url)
+                full_text  = tweet_data.get("text", "")
+                author     = tweet_data.get("author", username)
+                images     = tweet_data.get("images", [])
 
-                if improve_text and tweet_data.get("text"):
-                    upd("تحسين النص...")
-                    tweet_data["text"] = improve_arabic_text(tweet_data["text"], api_key, upd)
+                # ── OCR ──
+                ocr_text = ""
+                if enable_ocr and images:
+                    update_status("🔤 جاري استخراج النصوص من الصور...")
+                    progress.progress(35)
+                    for img_url in images[:3]:
+                        try:
+                            resp = requests.get(img_url, timeout=10)
+                            if resp.status_code == 200:
+                                with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tf:
+                                    tf.write(resp.content)
+                                    tmp_path = tf.name
+                                t = ocr_image_tesseract(tmp_path)
+                                if not t:
+                                    t = ocr_image_gemini(tmp_path, api_key)
+                                if t:
+                                    ocr_text += f"\n{t}"
+                                os.unlink(tmp_path)
+                        except Exception:
+                            pass
 
-                ocr_texts: List[str] = []
-                if enable_ocr and tweet_data.get("images"):
-                    upd("تحليل الصور...")
-                    for img in tweet_data["images"][:3]:
-                        t = ocr_image_tesseract(img) or ocr_image_gemini(img, api_key, upd)
-                        if t.strip():
-                            ocr_texts.append(t)
-                progress.progress(50)
+                # ── تحسين عربي ──
+                if improve_arabic and full_text:
+                    update_status("✍️ جاري تحسين النص العربي...")
+                    progress.progress(50)
+                    full_text = improve_arabic_text(full_text, api_key)
 
-                video_transcript = ""
-                if enable_video and tweet_data.get("video_path"):
-                    upd("تحليل الفيديو...")
-                    video_transcript = transcribe_video_gemini(tweet_data["video_path"], api_key, upd)
+                # ── التحليل الرئيسي ──
+                update_status("🧠 جاري التحليل بالذكاء الاصطناعي...")
+                progress.progress(65)
 
-                full_text = tweet_data.get("text", "")
-                if ocr_texts:        full_text += "\n[صور]\n"   + "\n".join(ocr_texts)
-                if video_transcript: full_text += "\n[فيديو]\n" + video_transcript
-                tweet_data["text"] = full_text
+                if not full_text:
+                    st.warning("⚠️ لم يتم جلب نص المنشور، سيتم التحليل من الرابط فقط")
+                    full_text = f"منشور من @{username} – {tweet_url}"
 
-                upd("جارٍ التحليل التنفيذي...")
-                analysis = run_analysis(tweet_data, api_key, analysis_mode, upd)
-                progress.progress(70)
+                analysis = run_analysis(
+                    full_text, api_key, analysis_mode,
+                    ocr_text, "", username, update_status
+                )
+                progress.progress(85)
 
-                account_data     = {}
+                # ── جلب بيانات الحساب ──
+                account_data   = {}
                 profile_analysis = {}
-                if enable_profile or enable_vpn:
-                    username_for = (
-                        extract_username_from_url(profile_url_input)
-                        if profile_url_input
-                        else tweet_data.get("username", "") or tweet_data.get("url_username", "")
-                    )
-                    if username_for:
-                        upd("جارٍ جلب بيانات الحساب...")
-                        account_data = fetch_account_details_nitter(username_for)
-                        if enable_profile:
-                            upd("جارٍ تحليل طبيعة الحساب...")
-                            profile_analysis = analyze_account_profile(
-                                account_data, tweet_data.get("text", ""), api_key, upd
-                            )
-                progress.progress(100)
-                status_box.success("✅ اكتمل التحليل!")
+                if enable_profile:
+                    update_status("👤 جاري جلب بيانات الحساب...")
+                    account_data = fetch_account_details_nitter(username, api_key)
+                    if account_data.get("fetch_status") == "success" and api_key:
+                        update_status("📊 جاري تحليل طبيعة الحساب...")
+                        profile_analysis = analyze_account_profile(account_data, api_key, update_status)
 
+                progress.progress(100)
+                status.empty()
+                progress.empty()
+
+                st.success("✅ اكتمل التحليل بنجاح!")
                 st.markdown("---")
+
+                # ── عرض بيانات الحساب ──
                 if account_data:
-                    st.markdown("## 👤 بيانات الحساب")
                     display_account_info_card(account_data)
 
-                st.markdown("## 📰 تحليل المنشور")
-                display_analysis_results(analysis, tweet_data)
+                # ── عرض نتائج التحليل ──
+                display_analysis_results(analysis, username)
 
+                # ── عرض تحليل الحساب ──
                 if profile_analysis:
                     st.markdown("---")
-                    st.markdown("## 🕵️ تحليل طبيعة الحساب")
-                    display_profile_analysis(profile_analysis, account_data)
+                    display_profile_analysis(profile_analysis)
 
-                with st.expander("📝 النص الكامل", expanded=False):
-                    st.text_area("", value=tweet_data.get("text", "(فارغ)"), height=200, disabled=True)
-
-                export = {
-                    "tweet_url": tweet_url_input,
-                    "tweet_data": {k: v for k, v in tweet_data.items() if k != "video_path"},
-                    "analysis": analysis,
-                    "account_data": account_data,
-                    "profile_analysis": profile_analysis,
+                # ── تصدير JSON ──
+                st.markdown("---")
+                full_report = {
+                    "tweet_id":   tweet_id,
+                    "username":   username,
+                    "tweet_url":  tweet_url,
+                    "tweet_text": full_text,
+                    "ocr_text":   ocr_text,
+                    "analysis":   analysis,
+                    "account_data":       account_data,
+                    "profile_analysis":   profile_analysis,
+                    "timestamp":  time.strftime("%Y-%m-%dT%H:%M:%S"),
                 }
                 st.download_button(
-                    "💾 تحميل التقرير الكامل (JSON)",
-                    data=json.dumps(export, ensure_ascii=False, indent=2),
-                    file_name="report_" + tweet_data.get("tweet_id", "") + ".json",
-                    mime="application/json"
+                    label="⬇️ تصدير التقرير (JSON)",
+                    data=json.dumps(full_report, ensure_ascii=False, indent=2),
+                    file_name=f"report_{tweet_id or 'unknown'}.json",
+                    mime="application/json",
                 )
 
-    # ══════════════════════════════════════════════════════
+    # ────────────────────────────────────────────
+    # تبويب 2 – تحليل الحساب
+    # ────────────────────────────────────────────
     with tab_profile:
-        st.markdown("### 🕵️ تحليل حساب X")
-        profile_only = st.text_input(
-            "رابط الحساب أو المعرف",
-            placeholder="https://x.com/username  أو  @username"
+        st.markdown("### 👤 تحليل ملف حساب X")
+        profile_url_input = st.text_input(
+            "رابط الحساب",
+            placeholder="https://x.com/username",
+            label_visibility="collapsed",
+            key="profile_url_input"
         )
-        if st.button("🔍 استخراج بيانات الحساب + تحليله", type="primary", use_container_width=True):
-            if not profile_only.strip():
-                st.error("❌ أدخل رابط الحساب أو المعرف")
-            elif not api_key:
-                st.error("❌ أدخل مفتاح Gemini API")
-            else:
-                uname_in = profile_only.strip()
-                if uname_in.startswith("http"):
-                    uname_in = extract_username_from_url(uname_in)
-                if not uname_in:
-                    st.error("❌ تعذّر استخراج المعرف")
-                else:
-                    s2 = st.empty()
-                    p2 = st.progress(0)
+        profile_btn = st.button("🔍 تحليل الحساب", key="analyze_profile")
 
-                    def upd2(msg):
-                        s2.info("⏳ " + msg)
-
-                    upd2("جارٍ جلب بيانات الحساب...")
-                    account_data2 = fetch_account_details_nitter(uname_in)
-                    p2.progress(50)
-
-                    if not account_data2.get("display_name") and not account_data2.get("recent_tweets"):
-                        st.warning("⚠️ تعذّر جلب البيانات من Nitter – سيتم التحليل بناءً على المعرف فقط")
-                        account_data2["username"] = uname_in
-
-                    upd2("جارٍ التحليل...")
-                    profile_analysis2 = analyze_account_profile(account_data2, "", api_key, upd2)
-                    p2.progress(100)
-                    s2.success("✅ اكتمل!")
-
-                    st.markdown("---")
-                    st.markdown("## 👤 بيانات الحساب")
-                    display_account_info_card(account_data2)
-
-                    st.markdown("## 🕵️ تحليل طبيعة الحساب")
-                    display_profile_analysis(profile_analysis2, account_data2)
-
-                    st.download_button(
-                        "💾 تحميل التقرير (JSON)",
-                        data=json.dumps(
-                            {"username": uname_in, "account_data": account_data2,
-                             "profile_analysis": profile_analysis2},
-                            ensure_ascii=False, indent=2
-                        ),
-                        file_name="profile_" + uname_in.lstrip("@") + ".json",
-                        mime="application/json"
-                    )
-
-    # ══════════════════════════════════════════════════════
-    with tab_img:
-        st.markdown("### 🖼️ تحليل صورة مباشر")
-        uploaded = st.file_uploader("ارفع صورة", type=["jpg", "jpeg", "png", "webp", "gif"])
-        if uploaded and st.button("🔍 تحليل الصورة", type="primary"):
+        if profile_btn:
             if not api_key:
-                st.error("❌ أدخل مفتاح Gemini API")
+                st.error("❌ يرجى إدخال مفتاح Gemini API")
+            elif not profile_url_input.strip():
+                st.warning("⚠️ يرجى إدخال رابط الحساب")
             else:
-                with st.spinner("جارٍ التحليل..."):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded.name).suffix) as tmp:
-                        tmp.write(uploaded.read())
-                        tmp_path = tmp.name
-                    ocr_text = ocr_image_tesseract(tmp_path)
-                    img_data = open(tmp_path, "rb").read()
-                    img_b64  = base64.b64encode(img_data).decode()
-                    prompt   = [
-                        "حلل هذه الصورة: وصف المحتوى، النصوص، المعلومات الرئيسية، التوصيات. النص المستخرج: " + (ocr_text or "لا يوجد"),
-                        {"mime_type": "image/jpeg", "data": img_b64}
-                    ]
-                    sb3 = st.empty()
-                    res3, mdl3 = gemini_generate(prompt, api_key, lambda m: sb3.info(m))
-                    os.unlink(tmp_path)
-                    if res3:
-                        st.success("✅ النموذج: " + str(mdl3))
-                        st.markdown(res3)
-                    else:
-                        st.error("❌ فشل التحليل")
+                uname = extract_username_from_url(profile_url_input.strip())
+                if not uname:
+                    st.error("❌ تعذّر استخراج اسم المستخدم من الرابط")
+                else:
+                    with st.spinner("⏳ جاري جلب بيانات الحساب..."):
+                        acc_data = fetch_account_details_nitter(uname, api_key)
+                    display_account_info_card(acc_data)
 
-    # ══════════════════════════════════════════════════════
+                    if acc_data.get("fetch_status") == "success" and api_key:
+                        with st.spinner("🧠 جاري تحليل طبيعة الحساب..."):
+                            prof_analysis = analyze_account_profile(acc_data, api_key)
+                        display_profile_analysis(prof_analysis)
+                    else:
+                        st.warning("⚠️ لم يتم جلب بيانات الحساب من مرايا Nitter")
+
+    # ────────────────────────────────────────────
+    # تبويب 3 – تحليل الصورة
+    # ────────────────────────────────────────────
+    with tab_img:
+        st.markdown("### 🖼️ تحليل صورة")
+        uploaded = st.file_uploader("ارفع صورة للتحليل", type=["jpg","jpeg","png","webp"])
+        if uploaded and api_key:
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tf:
+                tf.write(uploaded.read())
+                img_path = tf.name
+            st.image(img_path, caption="الصورة المرفوعة", use_column_width=True)
+            with st.spinner("🔍 جاري تحليل الصورة..."):
+                ocr_result = ocr_image_gemini(img_path, api_key)
+            if ocr_result:
+                st.markdown('<div class="section-card"><div class="section-title">📝 النص المستخرج</div>', unsafe_allow_html=True)
+                st.text_area("", value=ocr_result, height=200, disabled=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+                with st.spinner("🧠 جاري التحليل..."):
+                    img_analysis = run_analysis(ocr_result, api_key, analysis_mode)
+                display_analysis_results(img_analysis)
+            os.unlink(img_path)
+        elif uploaded and not api_key:
+            st.error("❌ يرجى إدخال مفتاح Gemini API أولاً")
+
+    # ────────────────────────────────────────────
+    # تبويب 4 – دليل الاستخدام
+    # ────────────────────────────────────────────
     with tab_guide:
-        st.markdown("### 📖 دليل الاستخدام v6.6")
-        st.markdown("#### 🆕 الجديد في v6.6 — استخراج بيانات الحساب")
+        st.markdown("### 📖 دليل الاستخدام")
+
+        st.markdown("#### 🚀 البدء السريع")
         st.markdown(
-            "- **الاسم المعروض** + **المعرف** + **User ID الرقمي**  \n"
-            "- **الدولة / الموقع** المُعلن والمرصود  \n"
-            "- **تاريخ الانضمام** + التحقق + الحساب الخاص  \n"
-            "- **متصل عبر** (iPhone / Android / Web / تطبيق معين)  \n"
-            "- **كاشف VPN**: يكشف التناقض بين الموقع المُعلن ودولة الاتصال  \n"
-            "- **إحصائيات**: متابعون، يتابع، عدد المنشورات  \n"
-            "- **المنشور المثبّت**  \n"
-            "- **10 منشورات أخيرة** للتحليل"
+            "1. احصل على مفتاح Gemini مجاني من "
+            "[Google AI Studio](https://aistudio.google.com/apikey)\n"
+            "2. أدخل المفتاح في الشريط الجانبي الأيمن\n"
+            "3. الصق رابط المنشور أو رابط الحساب واضغط **تحليل**"
         )
-        st.markdown("#### 🔐 كيف يعمل كاشف VPN؟")
-        st.markdown(
-            "يرصد الكاشف المؤشرات التالية:  \n"
-            "1. تطبيقات مرتبطة بـ VPN في حقل 'متصل عبر'  \n"
-            "2. تناقض: الموقع المُعلن عربي لكن الاتصال من دولة غربية  \n"
-            "3. الاتصال من هولندا (مركز خوادم VPN)  \n"
-            "4. الاتصال من المملكة المتحدة مع موقع عربي مُعلن"
-        )
+
         st.markdown("#### ✅ الروابط المدعومة")
         st.code(
-            "https://x.com/username/status/123456789\n"
-            "https://x.com/username\n"
-            "@username",
+            "https://x.com/user/status/123456789\n"
+            "https://x.com/user/status/123456789?s=20\n"
+            "https://twitter.com/user/status/123456789\n"
+            "https://x.com/username  (رابط حساب)",
             language=None
         )
-        st.markdown("#### 🏷️ التصنيفات")
+
+        st.markdown("#### 🆕 مستجدات v6.7")
+        st.markdown(
+            "- **معرّف الحساب** يظهر بخط أبيض كبير\n"
+            "- **عدد المتابعين** في بطاقة الإحصائيات\n"
+            "- **تاريخ الانضمام** واضح في بيانات الحساب\n"
+            "- **الموقع الجغرافي** (الحساب موجود في)\n"
+            "- **حالة التوثيق** موثَّق / غير موثَّق / محمي\n"
+            "- دعم كامل للوضع الليلي والنهاري\n"
+            "- خطوط أكبر للقراءة السريعة"
+        )
+
+        st.markdown("#### ⚠️ حل مشكلة 429")
         st.table({
-            "التصنيف": list(ACCOUNT_CATEGORIES.keys()),
-            "الأيقونة": [v["icon"] for v in ACCOUNT_CATEGORIES.values()],
-            "الوصف":    [v["desc"] for v in ACCOUNT_CATEGORIES.values()],
+            "الحل":  ["انتظر دقيقة", "مفتاح جديد", "فعّل الفوترة"],
+            "الوصف": [
+                "الحد المجاني 10-15 طلب/دقيقة",
+                "أنشئ مفتاحاً جديداً من aistudio.google.com",
+                "يرفع الحد إلى 1000 طلب/دقيقة",
+            ]
+        })
+
+        st.markdown("#### 🤖 النماذج المتاحة")
+        st.table({
+            "النموذج":    ["gemini-1.5-flash ⭐", "gemini-1.5-flash-8b", "gemini-2.5-flash", "gemini-2.5-pro"],
+            "RPM مجاني": ["15", "15", "10", "5"],
+            "RPD مجاني": ["1,500", "1,500", "250", "100"],
         })
 
 
+# ═══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     main()
