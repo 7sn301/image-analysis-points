@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# X Account & Post Analyzer v8.4
-# الإصلاحات: HTML خام، username غير معرّف، نماذج Gemini 2.0، رسائل خطأ واضحة
+# X Account & Post Analyzer v8.5
+# الجديد: بطاقة مكبّرة + سحب معرّف الحساب (User ID)
 
 import streamlit as st
 
@@ -35,81 +35,119 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
     * { font-family: 'Cairo', sans-serif !important; }
     .main { background: #0f1117; color: #e0e0e0; }
+
     .profile-card {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
         border: 1px solid #30363d;
-        border-radius: 16px;
-        padding: 24px;
-        margin: 16px 0;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        border-radius: 20px;
+        padding: 36px;
+        margin: 20px 0;
+        box-shadow: 0 12px 40px rgba(0,0,0,0.5);
     }
     .profile-header {
         display: flex;
         align-items: center;
-        gap: 16px;
-        margin-bottom: 20px;
+        gap: 24px;
+        margin-bottom: 24px;
     }
     .profile-avatar {
-        width: 80px;
-        height: 80px;
+        width: 120px;
+        height: 120px;
         border-radius: 50%;
-        border: 3px solid #1d9bf0;
+        border: 4px solid #1d9bf0;
         object-fit: cover;
+        box-shadow: 0 0 20px rgba(29,155,240,0.4);
     }
     .profile-name {
-        font-size: 1.4em;
+        font-size: 1.9em;
         font-weight: 700;
         color: #ffffff;
+        margin-bottom: 4px;
     }
     .profile-username {
         color: #8b949e;
-        font-size: 0.95em;
+        font-size: 1.1em;
+        margin-bottom: 6px;
     }
-    .verified-badge { color: #1d9bf0; font-size: 1.1em; }
+    .verified-badge {
+        color: #1d9bf0;
+        font-size: 1.2em;
+    }
+    .user-id-badge {
+        display: inline-block;
+        background: rgba(29,155,240,0.15);
+        border: 1px solid #1d9bf0;
+        color: #1d9bf0;
+        border-radius: 8px;
+        padding: 3px 10px;
+        font-size: 0.85em;
+        font-family: monospace !important;
+        margin-top: 4px;
+        letter-spacing: 0.5px;
+    }
     .stats-row {
         display: flex;
-        gap: 24px;
-        margin: 16px 0;
+        gap: 20px;
+        margin: 20px 0;
         flex-wrap: wrap;
     }
     .stat-item {
         text-align: center;
-        background: rgba(255,255,255,0.05);
-        border-radius: 12px;
-        padding: 12px 20px;
-        min-width: 100px;
+        background: rgba(255,255,255,0.07);
+        border-radius: 14px;
+        padding: 16px 28px;
+        min-width: 130px;
+        border: 1px solid rgba(255,255,255,0.05);
     }
-    .stat-value { font-size: 1.3em; font-weight: 700; color: #1d9bf0; }
-    .stat-label { font-size: 0.8em; color: #8b949e; margin-top: 4px; }
+    .stat-value {
+        font-size: 1.7em;
+        font-weight: 700;
+        color: #1d9bf0;
+    }
+    .stat-label {
+        font-size: 0.9em;
+        color: #8b949e;
+        margin-top: 6px;
+    }
     .bio-section {
-        background: rgba(255,255,255,0.03);
-        border-radius: 8px;
-        padding: 12px 16px;
-        margin: 12px 0;
-        border-left: 3px solid #1d9bf0;
+        background: rgba(255,255,255,0.04);
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin: 14px 0;
+        border-left: 4px solid #1d9bf0;
         color: #c9d1d9;
-        line-height: 1.6;
+        line-height: 1.8;
+        font-size: 1.05em;
     }
-    .meta-row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
-    .meta-item { color: #8b949e; font-size: 0.9em; }
+    .meta-row {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        margin-top: 14px;
+    }
+    .meta-item {
+        color: #8b949e;
+        font-size: 1.0em;
+    }
     .source-badge {
         display: inline-block;
         background: #1d9bf0;
         color: white;
         border-radius: 20px;
-        padding: 3px 12px;
-        font-size: 0.8em;
+        padding: 4px 14px;
+        font-size: 0.85em;
         font-weight: 600;
     }
     .analysis-box {
         background: #161b22;
         border: 1px solid #30363d;
         border-radius: 12px;
-        padding: 20px;
+        padding: 24px;
         margin: 16px 0;
         white-space: pre-wrap;
-        line-height: 1.7;
+        line-height: 1.8;
         color: #c9d1d9;
+        font-size: 1.02em;
     }
     .stButton > button {
         background: linear-gradient(135deg, #1d9bf0, #0d47a1) !important;
@@ -173,7 +211,6 @@ IMAGE_ANALYSIS_POINTS = [
 # ─── دوال مساعدة ─────────────────────────────────────────────────────────────
 def clean_text(txt):
     # type: (Any) -> str
-    """تنظيف النص من HTML tags والأحرف الخاصة"""
     if not txt:
         return ""
     txt = str(txt)
@@ -246,9 +283,9 @@ def image_to_base64(url):
         if resp.status_code == 200:
             img = Image.open(BytesIO(resp.content))
             img = img.convert("RGB")
-            img.thumbnail((200, 200))
+            img.thumbnail((300, 300))
             buffer = BytesIO()
-            img.save(buffer, format="JPEG", quality=85)
+            img.save(buffer, format="JPEG", quality=90)
             return base64.b64encode(buffer.getvalue()).decode("utf-8")
     except Exception:
         pass
@@ -308,14 +345,17 @@ def fetch_via_guest_api(username):
         resp = requests.get(url, headers=headers, params=params, timeout=15)
         if resp.status_code == 200:
             data = resp.json()
-            user = (data.get("data", {})
-                        .get("user", {})
-                        .get("result", {})
-                        .get("legacy", {}))
+            result_obj = (data.get("data", {})
+                              .get("user", {})
+                              .get("result", {}))
+            # ✅ استخراج User ID من rest_id
+            user_id = result_obj.get("rest_id", "")
+            user = result_obj.get("legacy", {})
             if user and user.get("screen_name"):
                 return {
                     "name": user.get("name", ""),
                     "username": user.get("screen_name", username),
+                    "user_id": user_id or user.get("id_str", ""),
                     "bio": user.get("description", ""),
                     "followers": user.get("followers_count", 0),
                     "following": user.get("friends_count", 0),
@@ -345,6 +385,7 @@ def fetch_via_fxtwitter(username):
                 return {
                     "name": user.get("name", ""),
                     "username": user.get("screen_name", username),
+                    "user_id": str(user.get("id", "")),  # ✅ User ID من FxTwitter
                     "bio": user.get("description", ""),
                     "followers": user.get("followers", 0),
                     "following": user.get("following", 0),
@@ -387,10 +428,23 @@ def fetch_via_nitter(username):
                 if img_el:
                     src = img_el.get("src", "")
                     profile_image = mirror + src if src.startswith("/") else src
+
+                # ✅ محاولة استخراج User ID من Nitter
+                user_id = ""
+                try:
+                    rss_url = mirror + "/" + username + "/rss"
+                    rss_resp = requests.get(rss_url, headers=headers, timeout=8)
+                    id_match = re.search(r'twitter\.com/intent/user\?user_id=(\d+)', rss_resp.text)
+                    if id_match:
+                        user_id = id_match.group(1)
+                except Exception:
+                    pass
+
                 if name or bio:
                     return {
                         "name": name,
                         "username": username,
+                        "user_id": user_id,
                         "bio": bio,
                         "followers": followers,
                         "following": following,
@@ -436,6 +490,7 @@ def fetch_tweet_data(tweet_id):
                     "text": tweet.get("text", ""),
                     "author": tweet.get("author", {}).get("screen_name", ""),
                     "author_name": tweet.get("author", {}).get("name", ""),
+                    "author_id": str(tweet.get("author", {}).get("id", "")),
                     "likes": tweet.get("likes", 0),
                     "retweets": tweet.get("retweets", 0),
                     "replies": tweet.get("replies", 0),
@@ -450,10 +505,9 @@ def fetch_tweet_data(tweet_id):
     return None
 
 
-# ─── بطاقة الملف الشخصي ──────────────────────────────────────────────────────
+# ─── بطاقة الملف الشخصي المكبّرة ─────────────────────────────────────────────
 def render_profile_card(data):
     # type: (Dict[str, Any]) -> None
-    """عرض بطاقة الحساب - نسخة v8.4 مصلحة بالكامل"""
 
     # صورة الملف الشخصي
     profile_img_url = data.get("profile_image", "")
@@ -462,14 +516,20 @@ def render_profile_card(data):
         if b64:
             avatar_html = '<img src="data:image/jpeg;base64,' + b64 + '" class="profile-avatar">'
         else:
-            avatar_html = '<div style="width:80px;height:80px;border-radius:50%;background:#1d9bf0;display:flex;align-items:center;justify-content:center;font-size:2em;">👤</div>'
+            avatar_html = '<div style="width:120px;height:120px;border-radius:50%;background:#1d9bf0;display:flex;align-items:center;justify-content:center;font-size:3em;border:4px solid #1d9bf0;">👤</div>'
     else:
-        avatar_html = '<div style="width:80px;height:80px;border-radius:50%;background:#1d9bf0;display:flex;align-items:center;justify-content:center;font-size:2em;">👤</div>'
+        avatar_html = '<div style="width:120px;height:120px;border-radius:50%;background:#1d9bf0;display:flex;align-items:center;justify-content:center;font-size:3em;border:4px solid #1d9bf0;">👤</div>'
 
     # التوثيق
     verified_html = ' <span class="verified-badge">✓</span>' if data.get("verified") else ""
 
-    # الإحصائيات - بالجمع لا بـ .format()
+    # User ID badge
+    user_id_html = ""
+    uid = clean_text(data.get("user_id", ""))
+    if uid:
+        user_id_html = '<div><span class="user-id-badge">🆔 ID: ' + uid + '</span></div>'
+
+    # الإحصائيات
     stats_html = (
         '<div class="stats-row">'
         + '<div class="stat-item"><div class="stat-value">'
@@ -484,7 +544,7 @@ def render_profile_card(data):
         + '</div>'
     )
 
-    # الوصف - تنظيف كامل من HTML
+    # الوصف
     bio_html = ""
     raw_bio = clean_text(data.get("bio", ""))
     if raw_bio:
@@ -498,7 +558,6 @@ def render_profile_card(data):
 
     raw_date = clean_text(data.get("join_date", ""))
     if raw_date and raw_date not in ("غير متوفر", ""):
-        # تحويل التاريخ إذا كان بصيغة Twitter الطويلة
         try:
             dt = datetime.strptime(raw_date, "%a %b %d %H:%M:%S +0000 %Y")
             raw_date = dt.strftime("%d/%m/%Y")
@@ -510,20 +569,19 @@ def render_profile_card(data):
     if meta_parts:
         meta_html = '<div class="meta-row">' + "".join(meta_parts) + '</div>'
 
-    # تنظيف الاسم واليوزرنيم والمصدر
-    display_name    = clean_text(data.get("name", data.get("username", "")))
-    display_user    = clean_text(data.get("username", ""))
-    display_source  = clean_text(data.get("source", "Unknown"))
+    display_name   = clean_text(data.get("name", data.get("username", "")))
+    display_user   = clean_text(data.get("username", ""))
+    display_source = clean_text(data.get("source", "Unknown"))
 
-    # البطاقة الكاملة - جمع مباشر بلا .format()
     card_html = (
         '<div class="profile-card">'
           '<div class="profile-header">'
             + avatar_html
-            + '<div>'
+            + '<div style="flex:1;">'
                 '<div class="profile-name">' + display_name + verified_html + '</div>'
                 '<div class="profile-username">@' + display_user + '</div>'
                 '<span class="source-badge">📡 ' + display_source + '</span>'
+                + user_id_html
               '</div>'
           '</div>'
           + stats_html
@@ -533,6 +591,15 @@ def render_profile_card(data):
     )
 
     st.markdown(card_html, unsafe_allow_html=True)
+
+    # ✅ عرض ID في حقل قابل للنسخ
+    if uid:
+        st.text_input(
+            "🆔 معرّف الحساب (User ID) — انقر للنسخ",
+            value=uid,
+            disabled=True,
+            help="هذا هو المعرّف الرقمي الثابت للحساب"
+        )
 
 
 # ─── الشريط الجانبي ──────────────────────────────────────────────────────────
@@ -574,7 +641,7 @@ def setup_sidebar():
         return model
 
 
-# ─── دالة الخطأ الموحدة ──────────────────────────────────────────────────────
+# ─── دالة معالجة أخطاء Gemini ────────────────────────────────────────────────
 def handle_gemini_error(e):
     # type: (Exception) -> None
     err = str(e)
@@ -587,7 +654,7 @@ def handle_gemini_error(e):
     elif "API_KEY_INVALID" in err or "invalid" in err.lower():
         st.error("❌ مفتاح API غير صحيح — تحقق من المفتاح في الشريط الجانبي.")
     elif "not found" in err.lower() or "404" in err:
-        st.error("❌ النموذج المحدد غير متاح — جرب نموذجاً آخر من القائمة.")
+        st.error("❌ النموذج المحدد غير متاح — جرب نموذجاً آخر.")
     else:
         st.error("❌ خطأ في Gemini: " + err[:150])
 
@@ -612,6 +679,7 @@ def account_tab(model):
         with m1:
             manual_name     = st.text_input("الاسم الكامل")
             manual_username = st.text_input("اسم المستخدم (@)")
+            manual_user_id  = st.text_input("معرّف الحساب (User ID)")
             manual_bio      = st.text_area("الوصف (Bio)", height=80)
             manual_location = st.text_input("الموقع")
         with m2:
@@ -624,24 +692,25 @@ def account_tab(model):
     if analyze_btn and user_input:
         username = extract_username(user_input)
         if not username:
-            st.error("❌ تعذر استخراج اسم المستخدم. تأكد من صحة الرابط.")
+            st.error("❌ تعذر استخراج اسم المستخدم.")
             return
 
         st.info("🔄 جاري جلب بيانات @" + username + "...")
 
         if use_manual:
             data = {
-                "name":         manual_name or username,
-                "username":     manual_username.lstrip("@") or username,
-                "bio":          manual_bio,
-                "followers":    int(manual_followers),
-                "following":    int(manual_following),
-                "posts":        int(manual_posts),
-                "location":     manual_location,
-                "join_date":    manual_join or "غير متوفر",
-                "verified":     False,
+                "name":          manual_name or username,
+                "username":      manual_username.lstrip("@") or username,
+                "user_id":       manual_user_id,
+                "bio":           manual_bio,
+                "followers":     int(manual_followers),
+                "following":     int(manual_following),
+                "posts":         int(manual_posts),
+                "location":      manual_location,
+                "join_date":     manual_join or "غير متوفر",
+                "verified":      False,
                 "profile_image": "",
-                "source":       "إدخال يدوي",
+                "source":        "إدخال يدوي",
             }
             source = "manual"
         else:
@@ -661,6 +730,7 @@ def account_tab(model):
                             "معلومات الحساب:\n"
                             "- الاسم: " + str(data.get("name", "")) + "\n"
                             "- اسم المستخدم: @" + str(data.get("username", "")) + "\n"
+                            "- معرّف الحساب (ID): " + str(data.get("user_id", "غير متوفر")) + "\n"
                             "- الوصف: " + str(data.get("bio", "لا يوجد")) + "\n"
                             "- المتابعون: " + format_number(data.get("followers", 0)) + "\n"
                             "- يتابع: " + format_number(data.get("following", 0)) + "\n"
@@ -751,17 +821,19 @@ def tweet_tab(model):
             st.success("✅ تم جلب المنشور")
 
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("❤️ إعجابات",    format_number(tweet_data.get("likes", 0)))
-            c2.metric("🔁 إعادة نشر",  format_number(tweet_data.get("retweets", 0)))
-            c3.metric("💬 ردود",        format_number(tweet_data.get("replies", 0)))
-            c4.metric("👁️ مشاهدات",   format_number(tweet_data.get("views", 0)))
+            c1.metric("❤️ إعجابات",   format_number(tweet_data.get("likes", 0)))
+            c2.metric("🔁 إعادة نشر", format_number(tweet_data.get("retweets", 0)))
+            c3.metric("💬 ردود",       format_number(tweet_data.get("replies", 0)))
+            c4.metric("👁️ مشاهدات",  format_number(tweet_data.get("views", 0)))
 
             st.markdown("**نص المنشور:**")
             st.info(tweet_data.get("text", ""))
-            st.markdown(
-                "**المؤلف:** @" + tweet_data.get("author", "")
-                + " (" + tweet_data.get("author_name", "") + ")"
-            )
+
+            author_line = "@" + tweet_data.get("author", "") + " (" + tweet_data.get("author_name", "") + ")"
+            if tweet_data.get("author_id"):
+                author_line += " — ID: `" + tweet_data["author_id"] + "`"
+            st.markdown("**المؤلف:** " + author_line)
+
             if tweet_data.get("created_at"):
                 st.markdown("**التاريخ:** " + str(tweet_data["created_at"]))
 
@@ -772,7 +844,8 @@ def tweet_tab(model):
                             "حلل هذا المنشور من منصة X:\n\n"
                             "المنشور: " + str(tweet_data.get("text", "")) + "\n"
                             "المؤلف: @" + str(tweet_data.get("author", ""))
-                            + " (" + str(tweet_data.get("author_name", "")) + ")\n"
+                            + " (" + str(tweet_data.get("author_name", "")) + ")"
+                            + " — ID: " + str(tweet_data.get("author_id", "غير متوفر")) + "\n"
                             "الإحصائيات: إعجابات: " + format_number(tweet_data.get("likes", 0))
                             + " | إعادة نشر: " + format_number(tweet_data.get("retweets", 0))
                             + " | ردود: " + format_number(tweet_data.get("replies", 0))
@@ -803,8 +876,8 @@ def main():
     model = setup_sidebar()
     st.markdown("""
     <div style="text-align:center; padding:20px 0 10px 0;">
-        <h1 style="color:#1d9bf0; font-size:2em;">🔍 محلل حسابات X</h1>
-        <p style="color:#8b949e;">أداة تحليل استخباراتي متقدمة لمنصة X (تويتر)</p>
+        <h1 style="color:#1d9bf0; font-size:2.2em;">🔍 محلل حسابات X</h1>
+        <p style="color:#8b949e; font-size:1.1em;">أداة تحليل استخباراتي متقدمة لمنصة X (تويتر)</p>
     </div>
     """, unsafe_allow_html=True)
 
