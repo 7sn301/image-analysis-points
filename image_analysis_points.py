@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# X Account & Post Analyzer v8.7
-# الجديد: Twitter v1.1 API + sessions محسّنة + HTTP status في Debug
+# X Account & Post Analyzer v8.8
+# الحل النهائي: Tweepy بمفاتيح Developer الخاصة + إدخال يدوي
 
 import streamlit as st
 
@@ -13,7 +13,6 @@ st.set_page_config(
 
 import requests
 import re
-import json
 import random
 import base64
 import html as html_module
@@ -29,6 +28,12 @@ try:
 except ImportError:
     GEMINI_AVAILABLE = False
 
+try:
+    import tweepy
+    TWEEPY_AVAILABLE = True
+except ImportError:
+    TWEEPY_AVAILABLE = False
+
 # ──────────────────────────────────────────────
 # CSS
 # ──────────────────────────────────────────────
@@ -36,8 +41,7 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
 * { font-family: 'Cairo', sans-serif !important; }
-.main { background: #0a0a0a; color: #e0e0e0; }
-.stApp { background: #0a0a0a; }
+.main, .stApp { background: #0a0a0a; color: #e0e0e0; }
 .profile-card {
     background: linear-gradient(145deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
     border: 1px solid #2d2d5e; border-radius: 20px; padding: 32px;
@@ -51,7 +55,7 @@ st.markdown("""
     display: flex; align-items: center; justify-content: center;
     font-size: 48px; border: 3px solid #1da1f2;
 }
-.profile-name { font-size: 1.8em; font-weight: 900; color: #ffffff; margin-bottom: 4px; }
+.profile-name { font-size: 1.8em; font-weight: 900; color: #fff; margin-bottom: 4px; }
 .profile-username { font-size: 1.1em; color: #1da1f2; margin-bottom: 8px; }
 .user-id-badge {
     background: rgba(29,161,242,0.15); border: 1px solid #1da1f2;
@@ -90,6 +94,10 @@ st.markdown("""
 }
 .metric-value { font-size: 1.8em; font-weight: 700; color: #1da1f2; }
 .metric-label { font-size: 0.85em; color: #888; margin-top: 4px; }
+.api-setup-box {
+    background: linear-gradient(135deg, #0d2137, #0a1628);
+    border: 2px solid #1da1f2; border-radius: 16px; padding: 20px; margin: 16px 0;
+}
 .stTabs [data-baseweb="tab"] { font-size: 1.1em !important; font-weight: 600 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -98,22 +106,10 @@ st.markdown("""
 # CONSTANTS
 # ──────────────────────────────────────────────
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36",
 ]
-
-NITTER_MIRRORS = [
-    "https://nitter.poast.org",
-    "https://nitter.privacydev.net",
-    "https://nitter.cz",
-    "https://nitter.unixfox.eu",
-    "https://nitter.1d4.us",
-]
-
 FXTWITTER_API = "https://api.fxtwitter.com"
-TWITTER_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-
 IMAGE_ANALYSIS_POINTS = [
     "الهوية البصرية والشعارات", "النصوص والكتابات الظاهرة",
     "الأشخاص والوجوه", "المواقع الجغرافية", "التواريخ والأوقات",
@@ -125,22 +121,19 @@ IMAGE_ANALYSIS_POINTS = [
 # HELPERS
 # ──────────────────────────────────────────────
 def clean_text(txt: str) -> str:
-    if not txt:
-        return ""
+    if not txt: return ""
     txt = re.sub(r'<[^>]+>', '', str(txt))
     txt = html_module.unescape(txt)
-    return txt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").strip()
+    return txt.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").strip()
 
 def extract_username(text: str) -> str:
-    if not text:
-        return ""
+    if not text: return ""
     text = text.strip()
     m = re.search(r'(?:twitter\.com|x\.com)/([A-Za-z0-9_.]{1,50})(?:\?|/|$)', text)
     if m:
-        uname = m.group(1)
         skip = {"intent","search","home","explore","notifications","messages","i","settings"}
-        if uname.lower() not in skip:
-            return uname
+        if m.group(1).lower() not in skip:
+            return m.group(1)
     if text.startswith("@"):
         return text[1:].split()[0]
     if re.match(r'^[A-Za-z0-9_.]{1,50}$', text):
@@ -153,11 +146,9 @@ def extract_username(text: str) -> str:
     return text.lstrip("@")
 
 def extract_tweet_id(text: str) -> str:
-    if not text:
-        return ""
+    if not text: return ""
     m = re.search(r'status/(\d+)', text)
-    if m:
-        return m.group(1)
+    if m: return m.group(1)
     m = re.search(r'\b(\d{15,20})\b', text)
     return m.group(1) if m else ""
 
@@ -170,11 +161,9 @@ def format_number(n) -> str:
     except: return str(n)
 
 def format_date(date_str: str) -> str:
-    if not date_str or date_str == "غير متوفر":
-        return date_str or "غير متوفر"
-    for fmt in ["%a %b %d %H:%M:%S %z %Y", "%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"]:
-        try:
-            return datetime.strptime(date_str, fmt).strftime("%d/%m/%Y")
+    if not date_str or date_str == "غير متوفر": return date_str or "غير متوفر"
+    for fmt in ["%a %b %d %H:%M:%S %z %Y","%Y-%m-%dT%H:%M:%S.%fZ","%Y-%m-%dT%H:%M:%SZ","%Y-%m-%d"]:
+        try: return datetime.strptime(date_str, fmt).strftime("%d/%m/%Y")
         except: pass
     return date_str[:10] if len(date_str) >= 10 else date_str
 
@@ -186,263 +175,70 @@ def image_to_base64(url: str) -> str:
     except: pass
     return ""
 
-def make_headers(referer: str = "https://twitter.com/") -> dict:
-    return {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer": referer,
-        "Origin": referer.rstrip("/"),
-        "Connection": "keep-alive",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-site",
-    }
-
 # ──────────────────────────────────────────────
-# DATA FETCHING — 5 SOURCES
+# DATA FETCHING
 # ──────────────────────────────────────────────
-
-def fetch_via_syndication(username: str) -> tuple:
-    """Twitter Syndication CDN — بدون مفتاح"""
+def fetch_via_tweepy_v1(username: str, api_key: str, api_secret: str,
+                         access_token: str, access_secret: str) -> Optional[Dict]:
+    """Tweepy v1.1 — الأكثر موثوقية مع مفاتيح Developer الخاصة"""
+    if not TWEEPY_AVAILABLE or not all([api_key, api_secret, access_token, access_secret]):
+        return None
     try:
-        session = requests.Session()
-        session.headers.update(make_headers())
-        url = "https://cdn.syndication.twimg.com/widgets/followbutton/info.json"
-        r = session.get(url, params={"screen_names": username, "lang": "en"}, timeout=15)
-        if r.status_code != 200:
-            return None, r.status_code
-        data_list = r.json()
-        if not data_list or not isinstance(data_list, list) or len(data_list) == 0:
-            return None, "empty"
-        u = data_list[0]
+        auth = tweepy.OAuthHandler(api_key, api_secret)
+        auth.set_access_token(access_token, access_secret)
+        api = tweepy.API(auth, wait_on_rate_limit=False)
+        u = api.get_user(screen_name=username)
         return {
-            "name": u.get("name", ""),
-            "username": u.get("screen_name", username),
-            "user_id": str(u.get("id", u.get("id_str", ""))),
-            "bio": u.get("description", ""),
-            "followers": u.get("followers_count", 0),
-            "following": u.get("friends_count", 0),
-            "posts": u.get("statuses_count", 0),
-            "location": u.get("location", ""),
-            "join_date": u.get("created_at", ""),
-            "verified": u.get("verified", False),
-            "profile_image": u.get("profile_image_url_https", "").replace("_normal", ""),
-            "banner": u.get("profile_banner_url", ""),
-            "source": "Twitter Syndication",
-        }, 200
+            "name": u.name,
+            "username": u.screen_name,
+            "user_id": str(u.id),
+            "bio": u.description or "",
+            "followers": u.followers_count,
+            "following": u.friends_count,
+            "posts": u.statuses_count,
+            "location": u.location or "",
+            "join_date": str(u.created_at),
+            "verified": u.verified,
+            "profile_image": u.profile_image_url_https.replace("_normal","") if hasattr(u,"profile_image_url_https") else "",
+            "banner": getattr(u, "profile_banner_url", ""),
+            "source": "Twitter API (Tweepy)",
+        }
     except Exception as e:
-        return None, str(e)[:50]
+        return None
 
 
-def fetch_via_twitter_v1(username: str) -> tuple:
-    """Twitter API v1.1"""
+def fetch_via_tweepy_v2(username: str, bearer_token: str) -> Optional[Dict]:
+    """Tweepy v2 Bearer Token — يكفي مفتاح Bearer فقط"""
+    if not TWEEPY_AVAILABLE or not bearer_token:
+        return None
     try:
-        r = requests.get(
-            "https://api.twitter.com/1.1/users/show.json",
-            params={"screen_name": username, "include_entities": "false"},
-            headers={"Authorization": f"Bearer {TWITTER_BEARER}", "User-Agent": random.choice(USER_AGENTS)},
-            timeout=15,
+        client = tweepy.Client(bearer_token=bearer_token, wait_on_rate_limit=False)
+        resp = client.get_user(
+            username=username,
+            user_fields=["description","public_metrics","created_at",
+                         "location","verified","profile_image_url","entities"]
         )
-        if r.status_code != 200:
-            return None, r.status_code
-        u = r.json()
-        if "errors" in u or "error" in u:
-            return None, u.get("errors", [{}])[0].get("code", "err")
+        if not resp.data:
+            return None
+        u = resp.data
+        m = u.public_metrics or {}
         return {
-            "name": u.get("name", ""),
-            "username": u.get("screen_name", username),
-            "user_id": str(u.get("id_str", u.get("id", ""))),
-            "bio": u.get("description", ""),
-            "followers": u.get("followers_count", 0),
-            "following": u.get("friends_count", 0),
-            "posts": u.get("statuses_count", 0),
-            "location": u.get("location", ""),
-            "join_date": u.get("created_at", ""),
-            "verified": u.get("verified", False),
-            "profile_image": u.get("profile_image_url_https", "").replace("_normal", ""),
-            "banner": u.get("profile_banner_url", ""),
-            "source": "Twitter v1.1 API",
-        }, 200
-    except Exception as e:
-        return None, str(e)[:50]
-
-
-def fetch_via_twitter_v2(username: str) -> tuple:
-    """Twitter API v2"""
-    try:
-        r = requests.get(
-            f"https://api.twitter.com/2/users/by/username/{username}",
-            params={"user.fields": "description,public_metrics,created_at,location,verified,profile_image_url"},
-            headers={"Authorization": f"Bearer {TWITTER_BEARER}", "User-Agent": random.choice(USER_AGENTS)},
-            timeout=15,
-        )
-        if r.status_code != 200:
-            return None, r.status_code
-        data = r.json().get("data", {})
-        if not data:
-            return None, "no_data"
-        m = data.get("public_metrics", {})
-        return {
-            "name": data.get("name", ""),
-            "username": data.get("username", username),
-            "user_id": data.get("id", ""),
-            "bio": data.get("description", ""),
+            "name": u.name,
+            "username": u.username,
+            "user_id": str(u.id),
+            "bio": u.description or "",
             "followers": m.get("followers_count", 0),
             "following": m.get("following_count", 0),
             "posts": m.get("tweet_count", 0),
-            "location": data.get("location", ""),
-            "join_date": data.get("created_at", ""),
-            "verified": data.get("verified", False),
-            "profile_image": data.get("profile_image_url", "").replace("_normal", ""),
+            "location": u.location or "",
+            "join_date": str(u.created_at) if u.created_at else "",
+            "verified": getattr(u, "verified", False) or False,
+            "profile_image": (u.profile_image_url or "").replace("_normal",""),
             "banner": "",
-            "source": "Twitter v2 API",
-        }, 200
-    except Exception as e:
-        return None, str(e)[:50]
-
-
-def get_guest_token() -> str:
-    try:
-        r = requests.post(
-            "https://api.twitter.com/1.1/guest/activate.json",
-            headers={"Authorization": f"Bearer {TWITTER_BEARER}"},
-            timeout=10,
-        )
-        return r.json().get("guest_token", "") if r.status_code == 200 else ""
-    except: return ""
-
-
-def fetch_via_guest_api(username: str) -> tuple:
-    """Twitter GraphQL Guest API"""
-    try:
-        token = get_guest_token()
-        if not token:
-            return None, "no_token"
-        r = requests.get(
-            "https://api.twitter.com/graphql/G3KGOASz96M-Qu0nwmGXNg/UserByScreenName"
-            f"?variables=%7B%22screen_name%22%3A%22{username}%22%7D"
-            "&features=%7B%22verified_phone_label_enabled%22%3Afalse%7D",
-            headers={
-                "Authorization": f"Bearer {TWITTER_BEARER}",
-                "x-guest-token": token,
-                "User-Agent": random.choice(USER_AGENTS),
-            },
-            timeout=15,
-        )
-        if r.status_code != 200:
-            return None, r.status_code
-        result = r.json().get("data", {}).get("user", {}).get("result", {})
-        legacy = result.get("legacy", {})
-        if not legacy.get("name"):
-            return None, "no_legacy"
-        return {
-            "name": legacy.get("name", ""),
-            "username": legacy.get("screen_name", username),
-            "user_id": result.get("rest_id") or legacy.get("id_str", ""),
-            "bio": legacy.get("description", ""),
-            "followers": legacy.get("followers_count", 0),
-            "following": legacy.get("friends_count", 0),
-            "posts": legacy.get("statuses_count", 0),
-            "location": legacy.get("location", ""),
-            "join_date": legacy.get("created_at", ""),
-            "verified": legacy.get("verified", False) or result.get("is_blue_verified", False),
-            "profile_image": legacy.get("profile_image_url_https", "").replace("_normal", ""),
-            "banner": legacy.get("profile_banner_url", ""),
-            "source": "Twitter GraphQL",
-        }, 200
-    except Exception as e:
-        return None, str(e)[:50]
-
-
-def fetch_via_nitter(username: str) -> tuple:
-    """Nitter mirrors scraping"""
-    last_status = "no_mirrors"
-    for mirror in NITTER_MIRRORS:
-        try:
-            r = requests.get(
-                f"{mirror}/{username}",
-                headers={"User-Agent": random.choice(USER_AGENTS)},
-                timeout=12,
-            )
-            last_status = r.status_code
-            if r.status_code != 200:
-                continue
-            soup = BeautifulSoup(r.text, "html.parser")
-
-            def gs(label):
-                for item in soup.select(".profile-stat-header"):
-                    if label.lower() in item.get_text(strip=True).lower():
-                        v = item.find_next_sibling()
-                        return v.get_text(strip=True).replace(",", "") if v else "0"
-                return "0"
-
-            name_tag = soup.select_one(".profile-card-fullname")
-            if not name_tag:
-                continue
-
-            avatar = ""
-            at = soup.select_one(".profile-card-avatar img")
-            if at:
-                src = at.get("src", "")
-                avatar = mirror + src if src.startswith("/") else src
-
-            user_id = ""
-            try:
-                rr = requests.get(f"{mirror}/{username}/rss", headers={"User-Agent": random.choice(USER_AGENTS)}, timeout=8)
-                m = re.search(r'user_id=(\d+)', rr.text)
-                if m: user_id = m.group(1)
-            except: pass
-
-            return {
-                "name": name_tag.get_text(strip=True),
-                "username": (soup.select_one(".profile-card-username") or type("x", (), {"get_text": lambda *a, **k: username})()).get_text(strip=True).lstrip("@"),
-                "user_id": user_id,
-                "bio": (soup.select_one(".profile-bio") or type("x", (), {"get_text": lambda *a, **k: ""})()).get_text(separator=" ", strip=True),
-                "followers": gs("followers"),
-                "following": gs("following"),
-                "posts": gs("tweets"),
-                "location": (soup.select_one(".profile-location") or type("x", (), {"get_text": lambda *a, **k: ""})()).get_text(strip=True),
-                "join_date": (soup.select_one(".profile-joindate") or type("x", (), {"get_text": lambda *a, **k: ""})()).get_text(strip=True),
-                "verified": bool(soup.select_one(".verified-icon")),
-                "profile_image": avatar,
-                "banner": "",
-                "source": f"Nitter ({mirror})",
-            }, 200
-        except Exception as e:
-            last_status = str(e)[:30]
-            continue
-    return None, last_status
-
-
-def fetch_user_data(username: str, debug: bool = False) -> Optional[Dict]:
-    sources = [
-        ("🔵 Syndication API", fetch_via_syndication),
-        ("🟢 Twitter v1.1",    fetch_via_twitter_v1),
-        ("🟡 Twitter v2",      fetch_via_twitter_v2),
-        ("🟠 Twitter GraphQL", fetch_via_guest_api),
-        ("🔴 Nitter mirrors",  fetch_via_nitter),
-    ]
-
-    debug_rows = []
-    for label, func in sources:
-        try:
-            data, status = func(username)
-            ok = data is not None and bool(data.get("name"))
-            icon = "✅" if ok else "❌"
-            debug_rows.append(f"{icon} **{label}** — HTTP: `{status}`")
-            if ok:
-                if debug:
-                    st.caption("\n".join(debug_rows))
-                return data
-        except Exception as e:
-            debug_rows.append(f"❌ **{label}** — Exception: `{str(e)[:40]}`")
-
-    if debug:
-        for row in debug_rows:
-            st.caption(row)
-    return None
+            "source": "Twitter API v2 (Tweepy)",
+        }
+    except Exception:
+        return None
 
 
 def fetch_tweet_data(tweet_id: str) -> Optional[Dict]:
@@ -452,26 +248,24 @@ def fetch_tweet_data(tweet_id: str) -> Optional[Dict]:
             headers={"User-Agent": random.choice(USER_AGENTS)},
             timeout=15,
         )
-        if r.status_code != 200:
-            return None
+        if r.status_code != 200: return None
         data = r.json()
-        tweet = data.get("tweet") or data.get("data", {}).get("tweet", {})
-        if not tweet:
-            return None
+        tweet = data.get("tweet") or data.get("data",{}).get("tweet",{})
+        if not tweet: return None
         author = tweet.get("author") or {}
         return {
             "id": tweet_id,
-            "text": tweet.get("text", ""),
-            "likes": tweet.get("likes", 0),
-            "retweets": tweet.get("retweets", 0),
-            "replies": tweet.get("replies", 0),
-            "views": tweet.get("views", 0),
-            "date": tweet.get("created_at", ""),
+            "text": tweet.get("text",""),
+            "likes": tweet.get("likes",0),
+            "retweets": tweet.get("retweets",0),
+            "replies": tweet.get("replies",0),
+            "views": tweet.get("views",0),
+            "date": tweet.get("created_at",""),
             "url": tweet.get("url", f"https://x.com/i/status/{tweet_id}"),
-            "author_name": author.get("name", ""),
-            "author_username": author.get("screen_name", ""),
-            "author_id": str(author.get("id", author.get("id_str", ""))),
-            "media": tweet.get("media", {}).get("photos", []),
+            "author_name": author.get("name",""),
+            "author_username": author.get("screen_name",""),
+            "author_id": str(author.get("id", author.get("id_str",""))),
+            "media": tweet.get("media",{}).get("photos",[]),
             "source": "FxTwitter",
         }
     except: return None
@@ -480,12 +274,12 @@ def fetch_tweet_data(tweet_id: str) -> Optional[Dict]:
 # RENDER PROFILE CARD
 # ──────────────────────────────────────────────
 def render_profile_card(data: Dict):
-    display_name = clean_text(data.get("name", ""))
-    display_username = clean_text(data.get("username", ""))
-    user_id = clean_text(data.get("user_id", ""))
-    display_source = clean_text(data.get("source", "Unknown"))
+    display_name     = clean_text(data.get("name",""))
+    display_username = clean_text(data.get("username",""))
+    user_id          = clean_text(data.get("user_id",""))
+    display_source   = clean_text(data.get("source","Unknown"))
 
-    avatar_url = data.get("profile_image", "")
+    avatar_url = data.get("profile_image","")
     if avatar_url:
         b64 = image_to_base64(avatar_url)
         avatar_html = (
@@ -500,23 +294,25 @@ def render_profile_card(data: Dict):
 
     stats_html = (
         '<div class="stats-row">'
-        '<div class="stat-item"><div class="stat-value">' + format_number(data.get("followers", 0)) + '</div><div class="stat-label">متابِع</div></div>'
-        '<div class="stat-item"><div class="stat-value">' + format_number(data.get("following", 0)) + '</div><div class="stat-label">يتابع</div></div>'
-        '<div class="stat-item"><div class="stat-value">' + format_number(data.get("posts", 0)) + '</div><div class="stat-label">منشور</div></div>'
+        '<div class="stat-item"><div class="stat-value">' + format_number(data.get("followers",0)) + '</div><div class="stat-label">متابِع</div></div>'
+        '<div class="stat-item"><div class="stat-value">' + format_number(data.get("following",0)) + '</div><div class="stat-label">يتابع</div></div>'
+        '<div class="stat-item"><div class="stat-value">' + format_number(data.get("posts",0)) + '</div><div class="stat-label">منشور</div></div>'
         '</div>'
     )
 
-    bio_text = clean_text(data.get("bio", ""))
+    bio_text = clean_text(data.get("bio",""))
     bio_html = '<div class="bio-section">📄 ' + bio_text + '</div>' if bio_text else ""
 
     meta_parts = []
-    loc = clean_text(data.get("location", ""))
+    loc = clean_text(data.get("location",""))
     if loc: meta_parts.append("📍 " + loc)
-    jd = format_date(str(data.get("join_date", "")))
+    jd = format_date(str(data.get("join_date","")))
     if jd and jd != "غير متوفر": meta_parts.append("📅 انضم في: " + jd)
     meta_html = ""
     if meta_parts:
-        meta_html = '<div class="meta-row">' + "".join(['<span class="meta-item">' + p + '</span>' for p in meta_parts]) + '</div>'
+        meta_html = '<div class="meta-row">' + "".join(
+            ['<span class="meta-item">' + p + '</span>' for p in meta_parts]
+        ) + '</div>'
 
     card_html = (
         '<div class="profile-card"><div class="profile-header">'
@@ -524,13 +320,14 @@ def render_profile_card(data: Dict):
         '<div><div class="profile-name">' + display_name + verified_html + '</div>'
         '<div class="profile-username">@' + display_username + '</div>'
         + uid_html +
-        '<span class="source-badge">📡 ' + display_source + '</span></div>'
-        '</div>' + stats_html + bio_html + meta_html + '</div>'
+        '<span class="source-badge">📡 ' + display_source + '</span>'
+        '</div></div>'
+        + stats_html + bio_html + meta_html + '</div>'
     )
-
     st.markdown(card_html, unsafe_allow_html=True)
     if user_id:
-        st.text_input("🆔 معرّف الحساب — انقر للنسخ", value=user_id, key="uid_" + display_username)
+        st.text_input("🆔 معرّف الحساب (User ID) — انقر للنسخ",
+                       value=user_id, key="uid_" + display_username)
 
 # ──────────────────────────────────────────────
 # GEMINI ERROR HANDLER
@@ -551,61 +348,108 @@ def handle_gemini_error(e: Exception):
 # ──────────────────────────────────────────────
 def setup_sidebar():
     st.sidebar.markdown("## ⚙️ الإعدادات")
+
+    # ── Gemini ──
+    st.sidebar.markdown("### 🤖 Gemini AI")
     api_key = st.sidebar.text_input("🔑 مفتاح Gemini API", type="password", placeholder="AIzaSy...")
     model_name = st.sidebar.selectbox(
-        "🤖 نموذج Gemini",
-        ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-pro"],
+        "نموذج Gemini",
+        ["gemini-2.0-flash-lite","gemini-2.0-flash","gemini-1.5-pro"],
         index=0,
     )
-    debug_mode = st.sidebar.checkbox("🐛 وضع التشخيص (Debug)", value=False,
-                                      help="يُظهر HTTP status لكل مصدر بيانات")
-
-    model = None
+    gemini_model = None
     if api_key and GEMINI_AVAILABLE:
         try:
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(model_name)
+            gemini_model = genai.GenerativeModel(model_name)
             st.sidebar.success("✅ متصل بـ Gemini")
         except Exception as e:
             st.sidebar.error("❌ " + str(e)[:80])
 
     st.sidebar.markdown("---")
+
+    # ── Twitter API ──
+    st.sidebar.markdown("### 🐦 Twitter Developer API")
+    with st.sidebar.expander("🔑 مفاتيح Twitter API (مطلوبة للجلب)", expanded=True):
+        st.markdown("""
+<small>
+احصل على مفاتيحك من:
+<a href="https://developer.twitter.com/en/portal/dashboard" target="_blank">
+developer.twitter.com</a>
+</small>
+""", unsafe_allow_html=True)
+
+        tw_method = st.radio(
+            "طريقة الاتصال",
+            ["🔐 Bearer Token فقط (v2)", "🔑 مفاتيح كاملة (v1.1)"],
+            index=0,
+        )
+
+        tw_bearer = ""
+        tw_api_key = tw_api_secret = tw_access = tw_access_secret = ""
+
+        if tw_method == "🔐 Bearer Token فقط (v2)":
+            tw_bearer = st.text_input("Bearer Token", type="password",
+                placeholder="AAAAAAA...", key="tw_bearer")
+        else:
+            tw_api_key     = st.text_input("API Key (Consumer Key)", type="password", key="tw_akey")
+            tw_api_secret  = st.text_input("API Secret", type="password", key="tw_asecret")
+            tw_access      = st.text_input("Access Token", type="password", key="tw_at")
+            tw_access_secret = st.text_input("Access Token Secret", type="password", key="tw_ats")
+
+    debug_mode = st.sidebar.checkbox("🐛 وضع التشخيص", value=False)
+
+    st.sidebar.markdown("---")
     st.sidebar.markdown("""
 **📖 كيفية الاستخدام:**
-1. أدخل مفتاح Gemini API
-2. اختر التبويب المناسب
+1. أضف مفاتيح Twitter Developer
+2. أضف مفتاح Gemini AI
 3. أدخل رابط الحساب أو المنشور
-4. اضغط زر الجلب
+4. اضغط جلب البيانات
 
-**💡 نصيحة:**
-لو فشل الجلب التلقائي استخدم
-**الإدخال اليدوي** وأدخل البيانات يدوياً
+**💡 بدون مفاتيح Twitter:**
+استخدم الإدخال اليدوي في التطبيق
 """)
-    return model, debug_mode
+
+    twitter_creds = {
+        "method": tw_method,
+        "bearer": tw_bearer,
+        "api_key": tw_api_key,
+        "api_secret": tw_api_secret,
+        "access_token": tw_access,
+        "access_secret": tw_access_secret,
+    }
+    return gemini_model, debug_mode, twitter_creds
 
 # ──────────────────────────────────────────────
 # ACCOUNT TAB
 # ──────────────────────────────────────────────
-def account_tab(model, debug: bool = False):
+def account_tab(model, debug: bool, twitter_creds: dict):
     st.markdown("### 👤 تحليل حساب X")
-    col1, col2 = st.columns([3, 1])
+
+    # إرشادات سريعة
+    if not twitter_creds.get("bearer") and not twitter_creds.get("api_key"):
+        st.info("⚠️ **لم تُضف مفاتيح Twitter API بعد.** "
+                "أضفها في الشريط الجانبي، أو استخدم الإدخال اليدوي أدناه.")
+
+    col1, col2 = st.columns([3,1])
     with col1:
         user_input = st.text_input("🔗 رابط أو اسم المستخدم",
             placeholder="https://x.com/username  أو  @username  أو  username")
     with col2:
         fetch_btn = st.button("🔍 جلب البيانات", use_container_width=True)
 
-    with st.expander("✏️ إدخال بيانات يدوي (اختياري)"):
+    with st.expander("✏️ إدخال بيانات يدوي (يعمل دائماً بدون API)"):
         mc1, mc2 = st.columns(2)
         with mc1:
-            manual_name = st.text_input("الاسم الكامل")
+            manual_name      = st.text_input("الاسم الكامل")
             manual_followers = st.number_input("المتابعون", min_value=0, value=0)
-            manual_posts = st.number_input("المنشورات", min_value=0, value=0)
-            manual_user_id = st.text_input("معرّف الحساب (User ID)")
+            manual_posts     = st.number_input("المنشورات",  min_value=0, value=0)
+            manual_user_id   = st.text_input("معرّف الحساب (User ID)")
         with mc2:
-            manual_bio = st.text_area("النبذة التعريفية", height=100)
+            manual_bio       = st.text_area("النبذة التعريفية", height=100)
             manual_following = st.number_input("يتابع", min_value=0, value=0)
-            manual_location = st.text_input("الموقع")
+            manual_location  = st.text_input("الموقع")
         use_manual = st.checkbox("✅ استخدم البيانات اليدوية")
 
     if fetch_btn and user_input:
@@ -620,28 +464,57 @@ def account_tab(model, debug: bool = False):
         with st.spinner(f"⏳ جلب بيانات @{username}..."):
             if use_manual:
                 data = {
-                    "name": manual_name or username, "username": username,
-                    "user_id": manual_user_id, "bio": manual_bio,
-                    "followers": manual_followers, "following": manual_following,
-                    "posts": manual_posts, "location": manual_location,
-                    "join_date": "", "verified": False,
-                    "profile_image": "", "banner": "", "source": "يدوي",
+                    "name": manual_name or username,
+                    "username": username,
+                    "user_id": manual_user_id,
+                    "bio": manual_bio,
+                    "followers": manual_followers,
+                    "following": manual_following,
+                    "posts": manual_posts,
+                    "location": manual_location,
+                    "join_date": "",
+                    "verified": False,
+                    "profile_image": "",
+                    "banner": "",
+                    "source": "يدوي",
                 }
             else:
-                data = fetch_user_data(username, debug=debug)
+                data = None
+                method = twitter_creds.get("method","")
+
+                # المحاولة 1: Tweepy v2 (Bearer Token)
+                if twitter_creds.get("bearer"):
+                    if debug: st.caption("🔵 جاري المحاولة: Tweepy v2 (Bearer Token)...")
+                    data = fetch_via_tweepy_v2(username, twitter_creds["bearer"])
+                    if data and debug: st.caption("✅ نجح: Tweepy v2")
+
+                # المحاولة 2: Tweepy v1.1 (مفاتيح كاملة)
+                if not data and twitter_creds.get("api_key"):
+                    if debug: st.caption("🟢 جاري المحاولة: Tweepy v1.1...")
+                    data = fetch_via_tweepy_v1(
+                        username,
+                        twitter_creds["api_key"],
+                        twitter_creds["api_secret"],
+                        twitter_creds["access_token"],
+                        twitter_creds["access_secret"],
+                    )
+                    if data and debug: st.caption("✅ نجح: Tweepy v1.1")
 
         if not data:
-            st.error(f"❌ فشل جلب بيانات **@{username}** من جميع المصادر.")
-            st.warning(
-                "**أسباب محتملة:**\n"
-                "- الحساب خاص أو غير موجود\n"
-                "- Streamlit Cloud محجوب من Twitter APIs\n"
-                "- تقييد مؤقت من Twitter\n\n"
-                "**الحلول:**\n"
-                "1. تأكد أن الحساب عام وموجود فعلاً على X\n"
-                "2. جرّب حساباً معروفاً مثل `elonmusk` للاختبار\n"
-                "3. استخدم **الإدخال اليدوي** ↑ لإدخال البيانات يدوياً"
-            )
+            st.error(f"❌ فشل جلب بيانات **@{username}**")
+            st.warning("""
+**السبب:** Streamlit Cloud محجوب من جميع Twitter APIs (كودات 401/403).
+
+**الحلول:**
+
+**الحل 1 (الأفضل): مفاتيح Twitter Developer**
+1. سجّل دخولك على [developer.twitter.com](https://developer.twitter.com)
+2. أنشئ App جديد → احصل على Bearer Token
+3. أضفه في الشريط الجانبي ← "مفاتيح Twitter API"
+
+**الحل 2 (فوري): الإدخال اليدوي**
+افتح الـ expander ↑ "إدخال بيانات يدوي" وأدخل البيانات مباشرة
+""")
             return
 
         render_profile_card(data)
@@ -682,8 +555,12 @@ def account_tab(model, debug: bool = False):
 # ──────────────────────────────────────────────
 def tweet_tab(model):
     st.markdown("### 📝 تحليل منشور X")
-    tweet_url = st.text_input("🔗 رابط المنشور", placeholder="https://x.com/username/status/1234567890")
-    uploaded_image = st.file_uploader("🖼️ رفع صورة للتحليل (اختياري)", type=["jpg","jpeg","png","webp"])
+    tweet_url = st.text_input("🔗 رابط المنشور",
+        placeholder="https://x.com/username/status/1234567890")
+    uploaded_image = st.file_uploader(
+        "🖼️ رفع صورة للتحليل (اختياري)",
+        type=["jpg","jpeg","png","webp"]
+    )
     fetch_btn = st.button("🔍 جلب المنشور")
 
     if fetch_btn and tweet_url:
@@ -691,19 +568,19 @@ def tweet_tab(model):
         if not tweet_id:
             st.error("❌ لم يتم التعرف على رابط المنشور.")
             return
-        with st.spinner("⏳ جلب بيانات المنشور..."):
+        with st.spinner("⏳ جلب المنشور..."):
             tweet = fetch_tweet_data(tweet_id)
         if not tweet:
             st.error("❌ فشل جلب المنشور. تحقق من الرابط.")
             return
 
         st.success("✅ تم جلب المنشور بنجاح")
-        c1, c2, c3, c4 = st.columns(4)
+        c1,c2,c3,c4 = st.columns(4)
         for col, val, label in [
-            (c1, format_number(tweet.get("likes",0)), "❤️ إعجاب"),
+            (c1, format_number(tweet.get("likes",0)),    "❤️ إعجاب"),
             (c2, format_number(tweet.get("retweets",0)), "🔁 إعادة نشر"),
-            (c3, format_number(tweet.get("replies",0)), "💬 رد"),
-            (c4, format_number(tweet.get("views",0)), "👁️ مشاهدة"),
+            (c3, format_number(tweet.get("replies",0)),  "💬 رد"),
+            (c4, format_number(tweet.get("views",0)),    "👁️ مشاهدة"),
         ]:
             with col:
                 st.markdown(
@@ -713,7 +590,8 @@ def tweet_tab(model):
                 )
 
         st.markdown("**📄 نص المنشور:**")
-        st.text_area("", value=tweet.get("text",""), height=120, disabled=True, label_visibility="collapsed")
+        st.text_area("", value=tweet.get("text",""), height=120, disabled=True,
+                     label_visibility="collapsed")
         author_id = tweet.get("author_id","")
         st.markdown(
             f"👤 **{tweet.get('author_name','')}**  (@{tweet.get('author_username','')})"
@@ -730,8 +608,11 @@ def tweet_tab(model):
                     if uploaded_image:
                         img = Image.open(uploaded_image)
                         pts = "\n".join([f"- {p}" for p in IMAGE_ANALYSIS_POINTS])
-                        img_r = model.generate_content([f"حلل الصورة استخباراتياً:\n{pts}", img])
+                        img_r = model.generate_content(
+                            [f"حلل الصورة استخباراتياً مع التركيز على:\n{pts}", img]
+                        )
                         img_text = "\n\n**تحليل الصورة:**\n" + img_r.text
+
                     prompt = f"""حلل المنشور التالي استخباراتياً:
 - النص: {tweet.get('text','')}
 - الإعجابات: {format_number(tweet.get('likes',0))}
@@ -740,7 +621,7 @@ def tweet_tab(model):
 - المشاهدات: {format_number(tweet.get('views',0))}
 - التاريخ: {format_date(tweet.get('date',''))}
 - الكاتب: {tweet.get('author_name','')} (@{tweet.get('author_username','')})
-{('- ID: ' + author_id) if author_id else ''}
+{('- ID الكاتب: ' + author_id) if author_id else ''}
 {img_text}
 المطلوب: تحليل المحتوى، التأثير، المؤشرات، التوقيت، التوصيات.
 """
@@ -754,18 +635,18 @@ def tweet_tab(model):
 # MAIN
 # ──────────────────────────────────────────────
 def main():
-    model, debug_mode = setup_sidebar()
+    gemini_model, debug_mode, twitter_creds = setup_sidebar()
     st.markdown("""
 <div class="app-header">
     <div class="app-title">🔍 محلل حسابات X</div>
     <div class="app-subtitle">أداة تحليل استخباراتي لحسابات ومنشورات منصة X (Twitter)</div>
 </div>
 """, unsafe_allow_html=True)
-    tab1, tab2 = st.tabs(["👤 تحليل حساب", "📝 تحليل منشور"])
+    tab1, tab2 = st.tabs(["👤 تحليل حساب","📝 تحليل منشور"])
     with tab1:
-        account_tab(model, debug=debug_mode)
+        account_tab(gemini_model, debug_mode, twitter_creds)
     with tab2:
-        tweet_tab(model)
+        tweet_tab(gemini_model)
 
 if __name__ == "__main__":
     main()
