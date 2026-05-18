@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# X Account & Post Analyzer v8.8
-# الحل النهائي: Tweepy بمفاتيح Developer الخاصة + إدخال يدوي
+# X Account & Post Analyzer v8.9
+# الجديد: twikit (حساب عادي) + Nitter mirrors محدّثة 2025
 
 import streamlit as st
 
@@ -16,6 +16,9 @@ import re
 import random
 import base64
 import html as html_module
+import asyncio
+import json
+import os
 from datetime import datetime
 from typing import Optional, Dict, List
 from bs4 import BeautifulSoup
@@ -29,10 +32,10 @@ except ImportError:
     GEMINI_AVAILABLE = False
 
 try:
-    import tweepy
-    TWEEPY_AVAILABLE = True
+    from twikit import Client as TwikitClient
+    TWIKIT_AVAILABLE = True
 except ImportError:
-    TWEEPY_AVAILABLE = False
+    TWIKIT_AVAILABLE = False
 
 # ──────────────────────────────────────────────
 # CSS
@@ -94,10 +97,6 @@ st.markdown("""
 }
 .metric-value { font-size: 1.8em; font-weight: 700; color: #1da1f2; }
 .metric-label { font-size: 0.85em; color: #888; margin-top: 4px; }
-.api-setup-box {
-    background: linear-gradient(135deg, #0d2137, #0a1628);
-    border: 2px solid #1da1f2; border-radius: 16px; padding: 20px; margin: 16px 0;
-}
 .stTabs [data-baseweb="tab"] { font-size: 1.1em !important; font-weight: 600 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -108,8 +107,24 @@ st.markdown("""
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
 ]
+
+# مرايا Nitter تعمل فعلاً (مُحدَّثة مايو 2025)
+NITTER_MIRRORS = [
+    "https://nitter.kareem.one",
+    "https://nitter.net",
+    "https://nitter.catsarch.com",
+    "https://nitter.tiekoetter.com",
+    "https://nitter.poast.org",
+    "https://nitter.space",
+    "https://lightbrd.com",
+    "https://nuku.trabun.org",
+]
+
 FXTWITTER_API = "https://api.fxtwitter.com"
+COOKIES_FILE = "/tmp/twikit_cookies.json"
+
 IMAGE_ANALYSIS_POINTS = [
     "الهوية البصرية والشعارات", "النصوص والكتابات الظاهرة",
     "الأشخاص والوجوه", "المواقع الجغرافية", "التواريخ والأوقات",
@@ -176,71 +191,144 @@ def image_to_base64(url: str) -> str:
     return ""
 
 # ──────────────────────────────────────────────
-# DATA FETCHING
+# TWIKIT — حساب Twitter عادي (بدون Developer API)
 # ──────────────────────────────────────────────
-def fetch_via_tweepy_v1(username: str, api_key: str, api_secret: str,
-                         access_token: str, access_secret: str) -> Optional[Dict]:
-    """Tweepy v1.1 — الأكثر موثوقية مع مفاتيح Developer الخاصة"""
-    if not TWEEPY_AVAILABLE or not all([api_key, api_secret, access_token, access_secret]):
-        return None
+def run_async(coro):
+    """تشغيل async في Streamlit"""
     try:
-        auth = tweepy.OAuthHandler(api_key, api_secret)
-        auth.set_access_token(access_token, access_secret)
-        api = tweepy.API(auth, wait_on_rate_limit=False)
-        u = api.get_user(screen_name=username)
-        return {
-            "name": u.name,
-            "username": u.screen_name,
-            "user_id": str(u.id),
-            "bio": u.description or "",
-            "followers": u.followers_count,
-            "following": u.friends_count,
-            "posts": u.statuses_count,
-            "location": u.location or "",
-            "join_date": str(u.created_at),
-            "verified": u.verified,
-            "profile_image": u.profile_image_url_https.replace("_normal","") if hasattr(u,"profile_image_url_https") else "",
-            "banner": getattr(u, "profile_banner_url", ""),
-            "source": "Twitter API (Tweepy)",
-        }
-    except Exception as e:
-        return None
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, coro)
+                return future.result(timeout=30)
+        else:
+            return loop.run_until_complete(coro)
+    except Exception:
+        return asyncio.run(coro)
 
 
-def fetch_via_tweepy_v2(username: str, bearer_token: str) -> Optional[Dict]:
-    """Tweepy v2 Bearer Token — يكفي مفتاح Bearer فقط"""
-    if not TWEEPY_AVAILABLE or not bearer_token:
-        return None
-    try:
-        client = tweepy.Client(bearer_token=bearer_token, wait_on_rate_limit=False)
-        resp = client.get_user(
-            username=username,
-            user_fields=["description","public_metrics","created_at",
-                         "location","verified","profile_image_url","entities"]
+async def _twikit_login_and_fetch(username_target: str, tw_user: str,
+                                   tw_email: str, tw_password: str) -> Optional[Dict]:
+    client = TwikitClient('en-US')
+    # استخدام الكوكيز المحفوظة إذا وُجدت
+    if os.path.exists(COOKIES_FILE):
+        try:
+            client.load_cookies(COOKIES_FILE)
+        except Exception:
+            pass
+    else:
+        await client.login(
+            auth_info_1=tw_user,
+            auth_info_2=tw_email,
+            password=tw_password,
         )
-        if not resp.data:
-            return None
-        u = resp.data
-        m = u.public_metrics or {}
-        return {
-            "name": u.name,
-            "username": u.username,
-            "user_id": str(u.id),
-            "bio": u.description or "",
-            "followers": m.get("followers_count", 0),
-            "following": m.get("following_count", 0),
-            "posts": m.get("tweet_count", 0),
-            "location": u.location or "",
-            "join_date": str(u.created_at) if u.created_at else "",
-            "verified": getattr(u, "verified", False) or False,
-            "profile_image": (u.profile_image_url or "").replace("_normal",""),
-            "banner": "",
-            "source": "Twitter API v2 (Tweepy)",
-        }
+        client.save_cookies(COOKIES_FILE)
+
+    user = await client.get_user_by_screen_name(username_target)
+    if not user:
+        return None
+    return {
+        "name": getattr(user, "name", ""),
+        "username": getattr(user, "screen_name", username_target),
+        "user_id": str(getattr(user, "id", "")),
+        "bio": getattr(user, "description", "") or "",
+        "followers": getattr(user, "followers_count", 0),
+        "following": getattr(user, "friends_count", 0),
+        "posts": getattr(user, "statuses_count", 0),
+        "location": getattr(user, "location", "") or "",
+        "join_date": str(getattr(user, "created_at", "")),
+        "verified": getattr(user, "verified", False) or getattr(user, "is_blue_verified", False),
+        "profile_image": (getattr(user, "profile_image_url_https", "") or "").replace("_normal",""),
+        "banner": getattr(user, "profile_banner_url", "") or "",
+        "source": "twikit (حساب Twitter)",
+    }
+
+
+def fetch_via_twikit(username: str, tw_user: str, tw_email: str, tw_password: str) -> Optional[Dict]:
+    if not TWIKIT_AVAILABLE or not all([tw_user, tw_email, tw_password]):
+        return None
+    try:
+        return run_async(_twikit_login_and_fetch(username, tw_user, tw_email, tw_password))
     except Exception:
         return None
 
 
+# ──────────────────────────────────────────────
+# NITTER — مرايا محدّثة 2025
+# ──────────────────────────────────────────────
+def fetch_via_nitter(username: str, debug: bool = False) -> Optional[Dict]:
+    for mirror in NITTER_MIRRORS:
+        try:
+            r = requests.get(
+                f"{mirror}/{username}",
+                headers={"User-Agent": random.choice(USER_AGENTS)},
+                timeout=12,
+            )
+            if debug:
+                st.caption(f"  ↳ Nitter {mirror} → HTTP {r.status_code}")
+            if r.status_code != 200:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+
+            name_tag = soup.select_one(".profile-card-fullname")
+            if not name_tag:
+                continue
+
+            def gs(label):
+                for item in soup.select(".profile-stat-header"):
+                    if label.lower() in item.get_text(strip=True).lower():
+                        v = item.find_next_sibling()
+                        return v.get_text(strip=True).replace(",","") if v else "0"
+                return "0"
+
+            avatar = ""
+            at = soup.select_one(".profile-card-avatar img")
+            if at:
+                src = at.get("src","")
+                avatar = mirror + src if src.startswith("/") else src
+
+            user_id = ""
+            try:
+                rr = requests.get(
+                    f"{mirror}/{username}/rss",
+                    headers={"User-Agent": random.choice(USER_AGENTS)},
+                    timeout=8,
+                )
+                m = re.search(r'user_id=(\d+)', rr.text)
+                if m: user_id = m.group(1)
+            except: pass
+
+            uname_tag = soup.select_one(".profile-card-username")
+            bio_tag   = soup.select_one(".profile-bio")
+            loc_tag   = soup.select_one(".profile-location")
+            join_tag  = soup.select_one(".profile-joindate")
+
+            return {
+                "name": name_tag.get_text(strip=True),
+                "username": uname_tag.get_text(strip=True).lstrip("@") if uname_tag else username,
+                "user_id": user_id,
+                "bio": bio_tag.get_text(separator=" ",strip=True) if bio_tag else "",
+                "followers": gs("followers"),
+                "following": gs("following"),
+                "posts": gs("tweets"),
+                "location": loc_tag.get_text(strip=True) if loc_tag else "",
+                "join_date": join_tag.get_text(strip=True) if join_tag else "",
+                "verified": bool(soup.select_one(".verified-icon")),
+                "profile_image": avatar,
+                "banner": "",
+                "source": f"Nitter ({mirror})",
+            }
+        except Exception as ex:
+            if debug:
+                st.caption(f"  ↳ Nitter {mirror} → خطأ: {str(ex)[:40]}")
+            continue
+    return None
+
+
+# ──────────────────────────────────────────────
+# FETCH TWEET
+# ──────────────────────────────────────────────
 def fetch_tweet_data(tweet_id: str) -> Optional[Dict]:
     try:
         r = requests.get(
@@ -261,10 +349,10 @@ def fetch_tweet_data(tweet_id: str) -> Optional[Dict]:
             "replies": tweet.get("replies",0),
             "views": tweet.get("views",0),
             "date": tweet.get("created_at",""),
-            "url": tweet.get("url", f"https://x.com/i/status/{tweet_id}"),
+            "url": tweet.get("url",f"https://x.com/i/status/{tweet_id}"),
             "author_name": author.get("name",""),
             "author_username": author.get("screen_name",""),
-            "author_id": str(author.get("id", author.get("id_str",""))),
+            "author_id": str(author.get("id",author.get("id_str",""))),
             "media": tweet.get("media",{}).get("photos",[]),
             "source": "FxTwitter",
         }
@@ -326,8 +414,7 @@ def render_profile_card(data: Dict):
     )
     st.markdown(card_html, unsafe_allow_html=True)
     if user_id:
-        st.text_input("🆔 معرّف الحساب (User ID) — انقر للنسخ",
-                       value=user_id, key="uid_" + display_username)
+        st.text_input("🆔 معرّف الحساب — انقر للنسخ", value=user_id, key="uid_"+display_username)
 
 # ──────────────────────────────────────────────
 # GEMINI ERROR HANDLER
@@ -349,7 +436,7 @@ def handle_gemini_error(e: Exception):
 def setup_sidebar():
     st.sidebar.markdown("## ⚙️ الإعدادات")
 
-    # ── Gemini ──
+    # Gemini
     st.sidebar.markdown("### 🤖 Gemini AI")
     api_key = st.sidebar.text_input("🔑 مفتاح Gemini API", type="password", placeholder="AIzaSy...")
     model_name = st.sidebar.selectbox(
@@ -368,56 +455,42 @@ def setup_sidebar():
 
     st.sidebar.markdown("---")
 
-    # ── Twitter API ──
-    st.sidebar.markdown("### 🐦 Twitter Developer API")
-    with st.sidebar.expander("🔑 مفاتيح Twitter API (مطلوبة للجلب)", expanded=True):
+    # twikit — حساب Twitter عادي
+    st.sidebar.markdown("### 🐦 حساب Twitter (للجلب التلقائي)")
+    with st.sidebar.expander("🔐 بيانات حساب Twitter العادي", expanded=True):
         st.markdown("""
 <small>
-احصل على مفاتيحك من:
-<a href="https://developer.twitter.com/en/portal/dashboard" target="_blank">
-developer.twitter.com</a>
+أدخل بيانات حسابك الشخصي على X (ليس Developer).
+تُحفظ الجلسة مؤقتاً ولا تُرسل لأي جهة.
 </small>
 """, unsafe_allow_html=True)
+        tw_user     = st.text_input("اسم المستخدم (@username)", placeholder="@yourname", key="tw_u")
+        tw_email    = st.text_input("البريد الإلكتروني", placeholder="you@email.com", key="tw_e")
+        tw_password = st.text_input("كلمة المرور", type="password", key="tw_p")
 
-        tw_method = st.radio(
-            "طريقة الاتصال",
-            ["🔐 Bearer Token فقط (v2)", "🔑 مفاتيح كاملة (v1.1)"],
-            index=0,
-        )
-
-        tw_bearer = ""
-        tw_api_key = tw_api_secret = tw_access = tw_access_secret = ""
-
-        if tw_method == "🔐 Bearer Token فقط (v2)":
-            tw_bearer = st.text_input("Bearer Token", type="password",
-                placeholder="AAAAAAA...", key="tw_bearer")
+        if tw_user and tw_email and tw_password:
+            st.success("✅ بيانات مُدخلة — سيُستخدم twikit")
         else:
-            tw_api_key     = st.text_input("API Key (Consumer Key)", type="password", key="tw_akey")
-            tw_api_secret  = st.text_input("API Secret", type="password", key="tw_asecret")
-            tw_access      = st.text_input("Access Token", type="password", key="tw_at")
-            tw_access_secret = st.text_input("Access Token Secret", type="password", key="tw_ats")
+            st.info("💡 بدون بيانات: سيُجرَّب Nitter فقط")
 
     debug_mode = st.sidebar.checkbox("🐛 وضع التشخيص", value=False)
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("""
-**📖 كيفية الاستخدام:**
-1. أضف مفاتيح Twitter Developer
-2. أضف مفتاح Gemini AI
+**📖 طريقة الاستخدام:**
+1. أدخل بيانات حساب Twitter
+2. أضف مفتاح Gemini (للتحليل)
 3. أدخل رابط الحساب أو المنشور
 4. اضغط جلب البيانات
 
-**💡 بدون مفاتيح Twitter:**
-استخدم الإدخال اليدوي في التطبيق
+**💡 بدون حساب Twitter:**
+استخدم الإدخال اليدوي
 """)
 
     twitter_creds = {
-        "method": tw_method,
-        "bearer": tw_bearer,
-        "api_key": tw_api_key,
-        "api_secret": tw_api_secret,
-        "access_token": tw_access,
-        "access_secret": tw_access_secret,
+        "tw_user": tw_user,
+        "tw_email": tw_email,
+        "tw_password": tw_password,
     }
     return gemini_model, debug_mode, twitter_creds
 
@@ -427,19 +500,23 @@ developer.twitter.com</a>
 def account_tab(model, debug: bool, twitter_creds: dict):
     st.markdown("### 👤 تحليل حساب X")
 
-    # إرشادات سريعة
-    if not twitter_creds.get("bearer") and not twitter_creds.get("api_key"):
-        st.info("⚠️ **لم تُضف مفاتيح Twitter API بعد.** "
-                "أضفها في الشريط الجانبي، أو استخدم الإدخال اليدوي أدناه.")
+    has_twikit_creds = all([
+        twitter_creds.get("tw_user"),
+        twitter_creds.get("tw_email"),
+        twitter_creds.get("tw_password"),
+    ])
+
+    if not has_twikit_creds:
+        st.info("⚠️ لم تُدخل بيانات Twitter بعد. سيُجرَّب Nitter تلقائياً، أو استخدم الإدخال اليدوي.")
 
     col1, col2 = st.columns([3,1])
     with col1:
         user_input = st.text_input("🔗 رابط أو اسم المستخدم",
-            placeholder="https://x.com/username  أو  @username  أو  username")
+            placeholder="https://x.com/username  أو  @username")
     with col2:
         fetch_btn = st.button("🔍 جلب البيانات", use_container_width=True)
 
-    with st.expander("✏️ إدخال بيانات يدوي (يعمل دائماً بدون API)"):
+    with st.expander("✏️ إدخال بيانات يدوي (يعمل دائماً)"):
         mc1, mc2 = st.columns(2)
         with mc1:
             manual_name      = st.text_input("الاسم الكامل")
@@ -459,7 +536,7 @@ def account_tab(model, debug: bool, twitter_creds: dict):
             return
 
         if debug:
-            st.info(f"🔍 اسم المستخدم المستخرج: **`{username}`**")
+            st.info(f"🔍 اسم المستخدم: **`{username}`**")
 
         with st.spinner(f"⏳ جلب بيانات @{username}..."):
             if use_manual:
@@ -480,40 +557,43 @@ def account_tab(model, debug: bool, twitter_creds: dict):
                 }
             else:
                 data = None
-                method = twitter_creds.get("method","")
 
-                # المحاولة 1: Tweepy v2 (Bearer Token)
-                if twitter_creds.get("bearer"):
-                    if debug: st.caption("🔵 جاري المحاولة: Tweepy v2 (Bearer Token)...")
-                    data = fetch_via_tweepy_v2(username, twitter_creds["bearer"])
-                    if data and debug: st.caption("✅ نجح: Tweepy v2")
+                # المحاولة 1: twikit (حساب عادي)
+                if has_twikit_creds and TWIKIT_AVAILABLE:
+                    if debug: st.caption("🔵 جاري المحاولة: twikit (حساب Twitter)...")
+                    try:
+                        data = fetch_via_twikit(
+                            username,
+                            twitter_creds["tw_user"],
+                            twitter_creds["tw_email"],
+                            twitter_creds["tw_password"],
+                        )
+                        if data and debug: st.caption("✅ نجح: twikit")
+                        if not data and debug: st.caption("❌ فشل: twikit")
+                    except Exception as e:
+                        if debug: st.caption(f"❌ twikit خطأ: {str(e)[:60]}")
 
-                # المحاولة 2: Tweepy v1.1 (مفاتيح كاملة)
-                if not data and twitter_creds.get("api_key"):
-                    if debug: st.caption("🟢 جاري المحاولة: Tweepy v1.1...")
-                    data = fetch_via_tweepy_v1(
-                        username,
-                        twitter_creds["api_key"],
-                        twitter_creds["api_secret"],
-                        twitter_creds["access_token"],
-                        twitter_creds["access_secret"],
-                    )
-                    if data and debug: st.caption("✅ نجح: Tweepy v1.1")
+                # المحاولة 2: Nitter (مرايا محدّثة 2025)
+                if not data:
+                    if debug: st.caption("🟠 جاري المحاولة: Nitter mirrors (2025)...")
+                    data = fetch_via_nitter(username, debug=debug)
+                    if data and debug: st.caption("✅ نجح: Nitter")
+                    if not data and debug: st.caption("❌ فشل: جميع مرايا Nitter")
 
         if not data:
             st.error(f"❌ فشل جلب بيانات **@{username}**")
             st.warning("""
-**السبب:** Streamlit Cloud محجوب من جميع Twitter APIs (كودات 401/403).
+**السبب:** جميع المصادر التلقائية فشلت.
 
-**الحلول:**
+**الحلول المتاحة:**
 
-**الحل 1 (الأفضل): مفاتيح Twitter Developer**
-1. سجّل دخولك على [developer.twitter.com](https://developer.twitter.com)
-2. أنشئ App جديد → احصل على Bearer Token
-3. أضفه في الشريط الجانبي ← "مفاتيح Twitter API"
+**✅ الحل الفوري:**
+استخدم الإدخال اليدوي ↑ — افتح الـ expander وأدخل البيانات مباشرة
 
-**الحل 2 (فوري): الإدخال اليدوي**
-افتح الـ expander ↑ "إدخال بيانات يدوي" وأدخل البيانات مباشرة
+**✅ الحل الأفضل (twikit):**
+1. أدخل بيانات حساب Twitter عادي في الشريط الجانبي
+2. لا تحتاج Developer API
+3. يكفي اسم المستخدم + بريد + كلمة مرور
 """)
             return
 
@@ -548,7 +628,7 @@ def account_tab(model, debug: bool, twitter_creds: dict):
                 except Exception as e:
                     handle_gemini_error(e)
         else:
-            st.info("💡 أضف مفتاح Gemini API في الشريط الجانبي للحصول على تحليل.")
+            st.info("💡 أضف مفتاح Gemini API في الشريط الجانبي.")
 
 # ──────────────────────────────────────────────
 # TWEET TAB
@@ -609,7 +689,7 @@ def tweet_tab(model):
                         img = Image.open(uploaded_image)
                         pts = "\n".join([f"- {p}" for p in IMAGE_ANALYSIS_POINTS])
                         img_r = model.generate_content(
-                            [f"حلل الصورة استخباراتياً مع التركيز على:\n{pts}", img]
+                            [f"حلل الصورة استخباراتياً:\n{pts}", img]
                         )
                         img_text = "\n\n**تحليل الصورة:**\n" + img_r.text
 
@@ -621,7 +701,7 @@ def tweet_tab(model):
 - المشاهدات: {format_number(tweet.get('views',0))}
 - التاريخ: {format_date(tweet.get('date',''))}
 - الكاتب: {tweet.get('author_name','')} (@{tweet.get('author_username','')})
-{('- ID الكاتب: ' + author_id) if author_id else ''}
+{('- ID الكاتب: '+author_id) if author_id else ''}
 {img_text}
 المطلوب: تحليل المحتوى، التأثير، المؤشرات، التوقيت، التوصيات.
 """
@@ -629,7 +709,7 @@ def tweet_tab(model):
                 except Exception as e:
                     handle_gemini_error(e)
         else:
-            st.info("💡 أضف مفتاح Gemini API للحصول على التحليل.")
+            st.info("💡 أضف مفتاح Gemini API للتحليل.")
 
 # ──────────────────────────────────────────────
 # MAIN
