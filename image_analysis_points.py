@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-# X Account & Post Analyzer v8.3 - جميع الأخطاء مصلحة
-# إصلاح 1: username غير معرّف في render_profile_card
-# إصلاح 2: نماذج Gemini محدّثة إلى 2.0
+# X Account & Post Analyzer v8.4
+# الإصلاحات: HTML خام، username غير معرّف، نماذج Gemini 2.0، رسائل خطأ واضحة
 
 import streamlit as st
 
@@ -17,7 +16,7 @@ import re
 import json
 import random
 import base64
-import time
+import html as html_module
 from datetime import datetime
 from typing import Optional, Dict, Any, Tuple, List
 from bs4 import BeautifulSoup
@@ -30,7 +29,7 @@ try:
 except ImportError:
     GEMINI_AVAILABLE = False
 
-# ─── CSS مخصص ───────────────────────────────────────────────────────────────
+# ─── CSS ─────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
@@ -66,10 +65,7 @@ st.markdown("""
         color: #8b949e;
         font-size: 0.95em;
     }
-    .verified-badge {
-        color: #1d9bf0;
-        font-size: 1.1em;
-    }
+    .verified-badge { color: #1d9bf0; font-size: 1.1em; }
     .stats-row {
         display: flex;
         gap: 24px;
@@ -83,16 +79,8 @@ st.markdown("""
         padding: 12px 20px;
         min-width: 100px;
     }
-    .stat-value {
-        font-size: 1.3em;
-        font-weight: 700;
-        color: #1d9bf0;
-    }
-    .stat-label {
-        font-size: 0.8em;
-        color: #8b949e;
-        margin-top: 4px;
-    }
+    .stat-value { font-size: 1.3em; font-weight: 700; color: #1d9bf0; }
+    .stat-label { font-size: 0.8em; color: #8b949e; margin-top: 4px; }
     .bio-section {
         background: rgba(255,255,255,0.03);
         border-radius: 8px;
@@ -102,16 +90,8 @@ st.markdown("""
         color: #c9d1d9;
         line-height: 1.6;
     }
-    .meta-row {
-        display: flex;
-        gap: 16px;
-        flex-wrap: wrap;
-        margin-top: 12px;
-    }
-    .meta-item {
-        color: #8b949e;
-        font-size: 0.9em;
-    }
+    .meta-row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
+    .meta-item { color: #8b949e; font-size: 0.9em; }
     .source-badge {
         display: inline-block;
         background: #1d9bf0;
@@ -138,28 +118,19 @@ st.markdown("""
         border-radius: 8px !important;
         padding: 8px 24px !important;
         font-weight: 600 !important;
-        transition: all 0.3s ease !important;
     }
     .stButton > button:hover {
         transform: translateY(-2px) !important;
         box-shadow: 0 4px 16px rgba(29,155,240,0.4) !important;
     }
-    .error-box {
-        background: rgba(218,54,51,0.1);
-        border: 1px solid #da3633;
-        border-radius: 8px;
-        padding: 12px 16px;
-        color: #ff7b72;
-        margin: 8px 0;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── ثوابت ────────────────────────────────────────────────────────────────────
+# ─── ثوابت ───────────────────────────────────────────────────────────────────
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
 ]
 
 NITTER_MIRRORS = [
@@ -199,7 +170,21 @@ IMAGE_ANALYSIS_POINTS = [
     "الأنشطة والأفعال",
 ]
 
-# ─── دوال مساعدة ───────────────────────────────────────────────────────────
+# ─── دوال مساعدة ─────────────────────────────────────────────────────────────
+def clean_text(txt):
+    # type: (Any) -> str
+    """تنظيف النص من HTML tags والأحرف الخاصة"""
+    if not txt:
+        return ""
+    txt = str(txt)
+    txt = re.sub(r'<[^>]+>', '', txt)
+    txt = html_module.unescape(txt)
+    txt = txt.replace("&", "&amp;")
+    txt = txt.replace("<", "&lt;")
+    txt = txt.replace(">", "&gt;")
+    return txt.strip()
+
+
 def extract_username(text):
     # type: (str) -> Optional[str]
     if not text:
@@ -242,6 +227,17 @@ def format_number(n):
         return str(n) if n else "0"
 
 
+def format_date(date_str):
+    # type: (str) -> str
+    if not date_str:
+        return "غير متوفر"
+    try:
+        dt = datetime.strptime(str(date_str), "%a %b %d %H:%M:%S +0000 %Y")
+        return dt.strftime("%d/%m/%Y")
+    except Exception:
+        return str(date_str)[:10] if len(str(date_str)) >= 10 else str(date_str)
+
+
 def image_to_base64(url):
     # type: (str) -> Optional[str]
     try:
@@ -259,18 +255,7 @@ def image_to_base64(url):
     return None
 
 
-def format_date(date_str):
-    # type: (str) -> str
-    if not date_str:
-        return "غير متوفر"
-    try:
-        dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S +0000 %Y")
-        return dt.strftime("%d/%m/%Y")
-    except Exception:
-        return str(date_str)[:10] if len(str(date_str)) >= 10 else str(date_str)
-
-
-# ─── جلب البيانات ──────────────────────────────────────────────────────────
+# ─── جلب البيانات ────────────────────────────────────────────────────────────
 def get_guest_token():
     # type: () -> Optional[str]
     try:
@@ -280,8 +265,7 @@ def get_guest_token():
         }
         resp = requests.post(
             "https://api.twitter.com/1.1/guest/activate.json",
-            headers=headers,
-            timeout=10
+            headers=headers, timeout=10
         )
         if resp.status_code == 200:
             return resp.json().get("guest_token")
@@ -351,7 +335,7 @@ def fetch_via_guest_api(username):
 def fetch_via_fxtwitter(username):
     # type: (str) -> Optional[Dict[str, Any]]
     try:
-        url = "{}/{}".format(FXTWITTER_API, username)
+        url = FXTWITTER_API + "/" + username
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
@@ -366,7 +350,7 @@ def fetch_via_fxtwitter(username):
                     "following": user.get("following", 0),
                     "posts": user.get("tweets", 0),
                     "location": user.get("location", ""),
-                    "join_date": user.get("joined", "غير متوفر"),
+                    "join_date": format_date(user.get("joined", "")),
                     "verified": user.get("verified", False),
                     "profile_image": user.get("avatar_url", ""),
                     "banner": user.get("banner_url", ""),
@@ -381,7 +365,7 @@ def fetch_via_nitter(username):
     # type: (str) -> Optional[Dict[str, Any]]
     for mirror in NITTER_MIRRORS:
         try:
-            url = "{}/{}".format(mirror, username)
+            url = mirror + "/" + username
             headers = {"User-Agent": random.choice(USER_AGENTS)}
             resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code == 200:
@@ -416,7 +400,7 @@ def fetch_via_nitter(username):
                         "verified": False,
                         "profile_image": profile_image,
                         "banner": "",
-                        "source": "Nitter ({})".format(mirror.split("//")[1]),
+                        "source": "Nitter (" + mirror.split("//")[1] + ")",
                     }
         except Exception:
             continue
@@ -440,7 +424,7 @@ def fetch_user_data(username):
 def fetch_tweet_data(tweet_id):
     # type: (str) -> Optional[Dict[str, Any]]
     try:
-        url = "https://api.fxtwitter.com/status/{}".format(tweet_id)
+        url = "https://api.fxtwitter.com/status/" + tweet_id
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         resp = requests.get(url, headers=headers, timeout=15)
         if resp.status_code == 200:
@@ -459,129 +443,126 @@ def fetch_tweet_data(tweet_id):
                     "created_at": tweet.get("created_at", ""),
                     "lang": tweet.get("lang", ""),
                     "media": tweet.get("media", {}).get("photos", []),
-                    "url": "https://x.com/{}/status/{}".format(
-                        tweet.get("author", {}).get("screen_name", ""), tweet_id
-                    ),
+                    "url": "https://x.com/" + tweet.get("author", {}).get("screen_name", "") + "/status/" + tweet_id,
                 }
     except Exception:
         pass
     return None
 
 
-# ─── عرض بطاقة الملف الشخصي ─────────────────────────────────────────────────
+# ─── بطاقة الملف الشخصي ──────────────────────────────────────────────────────
 def render_profile_card(data):
     # type: (Dict[str, Any]) -> None
-    avatar_html = ""
+    """عرض بطاقة الحساب - نسخة v8.4 مصلحة بالكامل"""
+
+    # صورة الملف الشخصي
     profile_img_url = data.get("profile_image", "")
     if profile_img_url:
         b64 = image_to_base64(profile_img_url)
         if b64:
-            avatar_html = '<img src="data:image/jpeg;base64,{}" class="profile-avatar">'.format(b64)
+            avatar_html = '<img src="data:image/jpeg;base64,' + b64 + '" class="profile-avatar">'
         else:
             avatar_html = '<div style="width:80px;height:80px;border-radius:50%;background:#1d9bf0;display:flex;align-items:center;justify-content:center;font-size:2em;">👤</div>'
     else:
         avatar_html = '<div style="width:80px;height:80px;border-radius:50%;background:#1d9bf0;display:flex;align-items:center;justify-content:center;font-size:2em;">👤</div>'
 
+    # التوثيق
     verified_html = ' <span class="verified-badge">✓</span>' if data.get("verified") else ""
 
-    stats_html = """
-    <div class="stats-row">
-        <div class="stat-item">
-            <div class="stat-value">{followers}</div>
-            <div class="stat-label">👥 متابعون</div>
-        </div>
-        <div class="stat-item">
-            <div class="stat-value">{following}</div>
-            <div class="stat-label">➡️ يتابع</div>
-        </div>
-        <div class="stat-item">
-            <div class="stat-value">{posts}</div>
-            <div class="stat-label">📝 منشورات</div>
-        </div>
-    </div>
-    """.format(
-        followers=format_number(data.get("followers", 0)),
-        following=format_number(data.get("following", 0)),
-        posts=format_number(data.get("posts", 0)),
+    # الإحصائيات - بالجمع لا بـ .format()
+    stats_html = (
+        '<div class="stats-row">'
+        + '<div class="stat-item"><div class="stat-value">'
+        + format_number(data.get("followers", 0))
+        + '</div><div class="stat-label">👥 متابعون</div></div>'
+        + '<div class="stat-item"><div class="stat-value">'
+        + format_number(data.get("following", 0))
+        + '</div><div class="stat-label">➡️ يتابع</div></div>'
+        + '<div class="stat-item"><div class="stat-value">'
+        + format_number(data.get("posts", 0))
+        + '</div><div class="stat-label">📝 منشورات</div></div>'
+        + '</div>'
     )
 
+    # الوصف - تنظيف كامل من HTML
     bio_html = ""
-    if data.get("bio"):
-        bio_html = '<div class="bio-section">📄 {}</div>'.format(data["bio"])
+    raw_bio = clean_text(data.get("bio", ""))
+    if raw_bio:
+        bio_html = '<div class="bio-section">📄 ' + raw_bio + '</div>'
 
-    meta_items = []
-    if data.get("location"):
-        meta_items.append("📍 {}".format(data["location"]))
-    if data.get("join_date") and data["join_date"] != "غير متوفر":
-        meta_items.append("📅 انضم في: {}".format(data["join_date"]))
+    # الموقع وتاريخ الانضمام
+    meta_parts = []
+    raw_loc = clean_text(data.get("location", ""))
+    if raw_loc:
+        meta_parts.append('<span class="meta-item">📍 ' + raw_loc + '</span>')
+
+    raw_date = clean_text(data.get("join_date", ""))
+    if raw_date and raw_date not in ("غير متوفر", ""):
+        # تحويل التاريخ إذا كان بصيغة Twitter الطويلة
+        try:
+            dt = datetime.strptime(raw_date, "%a %b %d %H:%M:%S +0000 %Y")
+            raw_date = dt.strftime("%d/%m/%Y")
+        except Exception:
+            pass
+        meta_parts.append('<span class="meta-item">📅 انضم في: ' + raw_date + '</span>')
+
     meta_html = ""
-    if meta_items:
-        meta_html = '<div class="meta-row">' + "".join(
-            ['<span class="meta-item">{}</span>'.format(item) for item in meta_items]
-        ) + '</div>'
+    if meta_parts:
+        meta_html = '<div class="meta-row">' + "".join(meta_parts) + '</div>'
 
-    # ✅ الإصلاح: استخدام data.get("username") بدلاً من username غير المعرّف
-    card_html = """
-    <div class="profile-card">
-        <div class="profile-header">
-            {avatar}
-            <div>
-                <div class="profile-name">{name}{verified}</div>
-                <div class="profile-username">@{username}</div>
-                <span class="source-badge">📡 {source}</span>
-            </div>
-        </div>
-        {stats}
-        {bio}
-        {meta}
-    </div>
-    """.format(
-        avatar=avatar_html,
-        name=data.get("name", data.get("username", "")),
-        verified=verified_html,
-        username=data.get("username", ""),
-        source=data.get("source", "Unknown"),
-        stats=stats_html,
-        bio=bio_html,
-        meta=meta_html,
+    # تنظيف الاسم واليوزرنيم والمصدر
+    display_name    = clean_text(data.get("name", data.get("username", "")))
+    display_user    = clean_text(data.get("username", ""))
+    display_source  = clean_text(data.get("source", "Unknown"))
+
+    # البطاقة الكاملة - جمع مباشر بلا .format()
+    card_html = (
+        '<div class="profile-card">'
+          '<div class="profile-header">'
+            + avatar_html
+            + '<div>'
+                '<div class="profile-name">' + display_name + verified_html + '</div>'
+                '<div class="profile-username">@' + display_user + '</div>'
+                '<span class="source-badge">📡 ' + display_source + '</span>'
+              '</div>'
+          '</div>'
+          + stats_html
+          + bio_html
+          + meta_html
+        + '</div>'
     )
 
     st.markdown(card_html, unsafe_allow_html=True)
 
 
-# ─── الشريط الجانبي ─────────────────────────────────────────────────────────
+# ─── الشريط الجانبي ──────────────────────────────────────────────────────────
 def setup_sidebar():
     # type: () -> Any
     with st.sidebar:
         st.markdown("## 🔍 محلل حسابات X")
         st.markdown("---")
-
         model = None
         if GEMINI_AVAILABLE:
             api_key = st.text_input(
                 "🔑 مفتاح Gemini API",
                 type="password",
                 placeholder="AIza...",
-                help="احصل على مفتاحك من: https://aistudio.google.com/apikey"
+                help="احصل على مفتاحك: https://aistudio.google.com/apikey"
             )
-
-            # ✅ الإصلاح: نماذج Gemini 2.0 المحدّثة
             gemini_model = st.selectbox(
                 "🤖 نموذج Gemini",
                 ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-pro"],
                 index=0
             )
-
             if api_key:
                 try:
                     genai.configure(api_key=api_key)
                     model = genai.GenerativeModel(gemini_model)
                     st.success("✅ Gemini متصل")
                 except Exception as e:
-                    st.error("❌ خطأ في الاتصال: {}".format(str(e)[:50]))
+                    st.error("❌ خطأ: " + str(e)[:60])
         else:
             st.warning("⚠️ google-generativeai غير مثبت")
-
         st.markdown("---")
         st.markdown("""
         **كيفية الاستخدام:**
@@ -590,11 +571,28 @@ def setup_sidebar():
         3. اضغط "تحليل الحساب"
         4. راجع النتائج والتقرير
         """)
-
         return model
 
 
-# ─── تبويب تحليل الحساب ─────────────────────────────────────────────────────
+# ─── دالة الخطأ الموحدة ──────────────────────────────────────────────────────
+def handle_gemini_error(e):
+    # type: (Exception) -> None
+    err = str(e)
+    if "429" in err or "quota" in err.lower() or "RESOURCE_EXHAUSTED" in err:
+        st.warning(
+            "⚠️ **تجاوزت الحد المجاني لـ Gemini API (429)**\n\n"
+            "احصل على مفتاح جديد من: https://aistudio.google.com/apikey\n\n"
+            "أو انتظر حتى يتجدد الحد غداً."
+        )
+    elif "API_KEY_INVALID" in err or "invalid" in err.lower():
+        st.error("❌ مفتاح API غير صحيح — تحقق من المفتاح في الشريط الجانبي.")
+    elif "not found" in err.lower() or "404" in err:
+        st.error("❌ النموذج المحدد غير متاح — جرب نموذجاً آخر من القائمة.")
+    else:
+        st.error("❌ خطأ في Gemini: " + err[:150])
+
+
+# ─── تبويب تحليل الحساب ──────────────────────────────────────────────────────
 def account_tab(model):
     # type: (Any) -> None
     st.markdown("### 🔍 تحليل حساب X")
@@ -610,101 +608,89 @@ def account_tab(model):
         analyze_btn = st.button("🔍 تحليل", use_container_width=True)
 
     with st.expander("📝 إدخال يدوي (في حال فشل الجلب التلقائي)"):
-        m_col1, m_col2 = st.columns(2)
-        with m_col1:
-            manual_name = st.text_input("الاسم الكامل")
+        m1, m2 = st.columns(2)
+        with m1:
+            manual_name     = st.text_input("الاسم الكامل")
             manual_username = st.text_input("اسم المستخدم (@)")
-            manual_bio = st.text_area("الوصف (Bio)", height=80)
+            manual_bio      = st.text_area("الوصف (Bio)", height=80)
             manual_location = st.text_input("الموقع")
-        with m_col2:
+        with m2:
             manual_followers = st.number_input("المتابعون", min_value=0, value=0)
-            manual_following = st.number_input("يتابع", min_value=0, value=0)
-            manual_posts = st.number_input("المنشورات", min_value=0, value=0)
-            manual_join = st.text_input("تاريخ الانضمام")
+            manual_following = st.number_input("يتابع",     min_value=0, value=0)
+            manual_posts     = st.number_input("المنشورات", min_value=0, value=0)
+            manual_join      = st.text_input("تاريخ الانضمام")
         use_manual = st.checkbox("استخدام البيانات اليدوية")
 
     if analyze_btn and user_input:
         username = extract_username(user_input)
-
         if not username:
             st.error("❌ تعذر استخراج اسم المستخدم. تأكد من صحة الرابط.")
             return
 
-        st.info("🔄 جاري جلب بيانات @{}...".format(username))
+        st.info("🔄 جاري جلب بيانات @" + username + "...")
 
         if use_manual:
             data = {
-                "name": manual_name or username,
-                "username": manual_username.lstrip("@") or username,
-                "bio": manual_bio,
-                "followers": int(manual_followers),
-                "following": int(manual_following),
-                "posts": int(manual_posts),
-                "location": manual_location,
-                "join_date": manual_join or "غير متوفر",
-                "verified": False,
+                "name":         manual_name or username,
+                "username":     manual_username.lstrip("@") or username,
+                "bio":          manual_bio,
+                "followers":    int(manual_followers),
+                "following":    int(manual_following),
+                "posts":        int(manual_posts),
+                "location":     manual_location,
+                "join_date":    manual_join or "غير متوفر",
+                "verified":     False,
                 "profile_image": "",
-                "source": "إدخال يدوي",
+                "source":       "إدخال يدوي",
             }
             source = "manual"
         else:
-            with st.spinner("جاري المحاولة..."):
+            with st.spinner("جاري المحاولة عبر Twitter API / FxTwitter / Nitter..."):
                 data, source = fetch_user_data(username)
 
         if data:
-            st.success("✅ تم جلب البيانات من: {}".format(data.get("source", source)))
+            st.success("✅ تم جلب البيانات من: " + data.get("source", source))
             render_profile_card(data)
 
             if model:
                 with st.spinner("🤖 جاري التحليل بالذكاء الاصطناعي..."):
                     try:
-                        prompt = """أنت محلل استخباراتي متخصص في تحليل حسابات منصة X.
-
-حلل الحساب التالي وقدم تقريرًا شاملًا:
-
-**معلومات الحساب:**
-- الاسم: {}
-- اسم المستخدم: @{}
-- الوصف: {}
-- المتابعون: {}
-- يتابع: {}
-- المنشورات: {}
-- الموقع: {}
-- تاريخ الانضمام: {}
-- موثق: {}
-
-**التقرير المطلوب:**
-1. 🎯 **تصنيف الحساب**: (شخصي/مؤسسي/إعلامي/بوت/مشبوه)
-2. 📊 **تحليل المصداقية**: نسبة المصداقية مع التبرير
-3. 🔍 **مؤشرات مثيرة للاهتمام**: أي أنماط غير عادية
-4. 📈 **تحليل التأثير**: مدى التأثير والانتشار
-5. ⚠️ **تقييم المخاطر**: هل يوجد محتوى مثير للقلق
-6. 📝 **ملاحظات استخباراتية**: معلومات قيمة للتحليل""".format(
-                            data.get("name", ""),
-                            data.get("username", ""),
-                            data.get("bio", "لا يوجد"),
-                            format_number(data.get("followers", 0)),
-                            format_number(data.get("following", 0)),
-                            format_number(data.get("posts", 0)),
-                            data.get("location", "غير محدد"),
-                            data.get("join_date", "غير متوفر"),
-                            "نعم" if data.get("verified") else "لا",
+                        prompt = (
+                            "أنت محلل استخباراتي متخصص في تحليل حسابات منصة X.\n\n"
+                            "حلل الحساب التالي وقدم تقريرًا شاملًا:\n\n"
+                            "معلومات الحساب:\n"
+                            "- الاسم: " + str(data.get("name", "")) + "\n"
+                            "- اسم المستخدم: @" + str(data.get("username", "")) + "\n"
+                            "- الوصف: " + str(data.get("bio", "لا يوجد")) + "\n"
+                            "- المتابعون: " + format_number(data.get("followers", 0)) + "\n"
+                            "- يتابع: " + format_number(data.get("following", 0)) + "\n"
+                            "- المنشورات: " + format_number(data.get("posts", 0)) + "\n"
+                            "- الموقع: " + str(data.get("location", "غير محدد")) + "\n"
+                            "- تاريخ الانضمام: " + str(data.get("join_date", "غير متوفر")) + "\n"
+                            "- موثق: " + ("نعم" if data.get("verified") else "لا") + "\n\n"
+                            "التقرير المطلوب:\n"
+                            "1. تصنيف الحساب (شخصي/مؤسسي/إعلامي/بوت/مشبوه)\n"
+                            "2. تحليل المصداقية مع التبرير\n"
+                            "3. مؤشرات مثيرة للاهتمام\n"
+                            "4. تحليل التأثير والانتشار\n"
+                            "5. تقييم المخاطر\n"
+                            "6. ملاحظات استخباراتية"
                         )
                         response = model.generate_content(prompt)
                         st.markdown("### 🤖 التقرير الاستخباراتي")
                         st.markdown(
-                            '<div class="analysis-box">{}</div>'.format(response.text),
+                            '<div class="analysis-box">' + response.text + '</div>',
                             unsafe_allow_html=True
                         )
                     except Exception as e:
-                        st.error("❌ خطأ في Gemini: {}".format(str(e)[:150]))
+                        handle_gemini_error(e)
             else:
-                st.info("💡 أضف مفتاح Gemini API من الشريط الجانبي للحصول على تحليل AI.")
+                st.info("💡 أضف مفتاح Gemini API من الشريط الجانبي.")
         else:
             st.error("❌ تعذر جلب بيانات الحساب. جرب الإدخال اليدوي.")
 
 
-# ─── تبويب تحليل المنشور ────────────────────────────────────────────────────
+# ─── تبويب تحليل المنشور ─────────────────────────────────────────────────────
 def tweet_tab(model):
     # type: (Any) -> None
     st.markdown("### 📝 تحليل منشور X")
@@ -723,7 +709,7 @@ def tweet_tab(model):
     uploaded_image = st.file_uploader(
         "ارفع صورة للتحليل",
         type=["jpg", "jpeg", "png", "webp"],
-        help="ارفع صورة من المنشور لتحليلها بالذكاء الاصطناعي"
+        help="ارفع صورة لتحليلها بالذكاء الاصطناعي"
     )
 
     if uploaded_image and model:
@@ -732,30 +718,28 @@ def tweet_tab(model):
                 try:
                     img = Image.open(uploaded_image)
                     points_text = "\n".join(
-                        ["{}. {}".format(i + 1, p) for i, p in enumerate(IMAGE_ANALYSIS_POINTS)]
+                        [str(i + 1) + ". " + p for i, p in enumerate(IMAGE_ANALYSIS_POINTS)]
                     )
-                    prompt = """أنت محلل استخباراتي متخصص في تحليل الصور الرقمية.
-
-حلل هذه الصورة وفق النقاط التالية:
-
-{}
-
-قدم تقريرًا مفصلًا ومنظمًا يغطي كل نقطة ذات صلة بالصورة.
-ركز على المعلومات الاستخباراتية القيمة.""".format(points_text)
+                    prompt = (
+                        "أنت محلل استخباراتي متخصص في تحليل الصور الرقمية.\n\n"
+                        "حلل هذه الصورة وفق النقاط التالية:\n\n"
+                        + points_text +
+                        "\n\nقدم تقريرًا مفصلًا ومنظمًا يغطي كل نقطة ذات صلة.\n"
+                        "ركز على المعلومات الاستخباراتية القيمة."
+                    )
                     response = model.generate_content([prompt, img])
                     st.markdown("### 🔍 نتائج تحليل الصورة")
                     st.markdown(
-                        '<div class="analysis-box">{}</div>'.format(response.text),
+                        '<div class="analysis-box">' + response.text + '</div>',
                         unsafe_allow_html=True
                     )
                 except Exception as e:
-                    st.error("❌ خطأ في تحليل الصورة: {}".format(str(e)[:150]))
+                    handle_gemini_error(e)
     elif uploaded_image and not model:
         st.info("💡 أضف مفتاح Gemini API لتحليل الصورة.")
 
     if fetch_btn and tweet_input:
         tweet_id = extract_tweet_id(tweet_input)
-
         if not tweet_id:
             st.error("❌ تعذر استخراج معرف المنشور.")
             return
@@ -766,54 +750,49 @@ def tweet_tab(model):
         if tweet_data:
             st.success("✅ تم جلب المنشور")
 
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("❤️ إعجابات", format_number(tweet_data.get("likes", 0)))
-            col2.metric("🔁 إعادة نشر", format_number(tweet_data.get("retweets", 0)))
-            col3.metric("💬 ردود", format_number(tweet_data.get("replies", 0)))
-            col4.metric("👁️ مشاهدات", format_number(tweet_data.get("views", 0)))
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("❤️ إعجابات",    format_number(tweet_data.get("likes", 0)))
+            c2.metric("🔁 إعادة نشر",  format_number(tweet_data.get("retweets", 0)))
+            c3.metric("💬 ردود",        format_number(tweet_data.get("replies", 0)))
+            c4.metric("👁️ مشاهدات",   format_number(tweet_data.get("views", 0)))
 
             st.markdown("**نص المنشور:**")
             st.info(tweet_data.get("text", ""))
-            st.markdown("**المؤلف:** @{} ({})".format(
-                tweet_data.get("author", ""),
-                tweet_data.get("author_name", "")
-            ))
+            st.markdown(
+                "**المؤلف:** @" + tweet_data.get("author", "")
+                + " (" + tweet_data.get("author_name", "") + ")"
+            )
             if tweet_data.get("created_at"):
-                st.markdown("**التاريخ:** {}".format(tweet_data["created_at"]))
+                st.markdown("**التاريخ:** " + str(tweet_data["created_at"]))
 
             if model:
-                with st.spinner("🤖 تحليل المنشور بالذكاء الاصطناعي..."):
+                with st.spinner("🤖 تحليل المنشور..."):
                     try:
-                        prompt = """حلل هذا المنشور من منصة X:
-
-**المنشور:** {}
-**المؤلف:** @{} ({})
-**الإحصائيات:** إعجابات: {} | إعادة نشر: {} | ردود: {} | مشاهدات: {}
-**التاريخ:** {}
-
-**التحليل المطلوب:**
-1. 📌 الموضوع الرئيسي والرسالة
-2. 🎯 الجمهور المستهدف
-3. 📊 مستوى التفاعل (عادي/عالٍ/غير عادي)
-4. ⚠️ أي محتوى مثير للقلق
-5. 🔍 ملاحظات استخباراتية""".format(
-                            tweet_data.get("text", ""),
-                            tweet_data.get("author", ""),
-                            tweet_data.get("author_name", ""),
-                            format_number(tweet_data.get("likes", 0)),
-                            format_number(tweet_data.get("retweets", 0)),
-                            format_number(tweet_data.get("replies", 0)),
-                            format_number(tweet_data.get("views", 0)),
-                            tweet_data.get("created_at", ""),
+                        prompt = (
+                            "حلل هذا المنشور من منصة X:\n\n"
+                            "المنشور: " + str(tweet_data.get("text", "")) + "\n"
+                            "المؤلف: @" + str(tweet_data.get("author", ""))
+                            + " (" + str(tweet_data.get("author_name", "")) + ")\n"
+                            "الإحصائيات: إعجابات: " + format_number(tweet_data.get("likes", 0))
+                            + " | إعادة نشر: " + format_number(tweet_data.get("retweets", 0))
+                            + " | ردود: " + format_number(tweet_data.get("replies", 0))
+                            + " | مشاهدات: " + format_number(tweet_data.get("views", 0)) + "\n"
+                            "التاريخ: " + str(tweet_data.get("created_at", "")) + "\n\n"
+                            "التحليل المطلوب:\n"
+                            "1. الموضوع الرئيسي والرسالة\n"
+                            "2. الجمهور المستهدف\n"
+                            "3. مستوى التفاعل (عادي/عالٍ/غير عادي)\n"
+                            "4. أي محتوى مثير للقلق\n"
+                            "5. ملاحظات استخباراتية"
                         )
                         response = model.generate_content(prompt)
                         st.markdown("### 🤖 تحليل المنشور")
                         st.markdown(
-                            '<div class="analysis-box">{}</div>'.format(response.text),
+                            '<div class="analysis-box">' + response.text + '</div>',
                             unsafe_allow_html=True
                         )
                     except Exception as e:
-                        st.error("❌ خطأ في Gemini: {}".format(str(e)[:150]))
+                        handle_gemini_error(e)
         else:
             st.error("❌ تعذر جلب المنشور. تأكد من الرابط.")
 
@@ -822,19 +801,16 @@ def tweet_tab(model):
 def main():
     # type: () -> None
     model = setup_sidebar()
-
     st.markdown("""
-    <div style="text-align:center; padding: 20px 0 10px 0;">
+    <div style="text-align:center; padding:20px 0 10px 0;">
         <h1 style="color:#1d9bf0; font-size:2em;">🔍 محلل حسابات X</h1>
         <p style="color:#8b949e;">أداة تحليل استخباراتي متقدمة لمنصة X (تويتر)</p>
     </div>
     """, unsafe_allow_html=True)
 
     tab1, tab2 = st.tabs(["👤 تحليل حساب", "📝 تحليل منشور"])
-
     with tab1:
         account_tab(model)
-
     with tab2:
         tweet_tab(model)
 
