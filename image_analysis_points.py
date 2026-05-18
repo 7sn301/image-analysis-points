@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# X Account & Post Analyzer v8.9
+# X Account & Post Analyzer v9.0
 # يعتمد على twikit (لا يحتاج Twitter Developer API)
 
 import streamlit as st
@@ -47,6 +47,7 @@ st.markdown("""
 <style>
   * { font-family: 'Cairo', sans-serif !important; }
   body, .stApp { background-color: #0d1117; color: #e6edf3; }
+
   .main-header {
       background: linear-gradient(135deg, #1a1f2e 0%, #0d1117 100%);
       border: 1px solid #30363d; border-radius: 12px;
@@ -54,6 +55,7 @@ st.markdown("""
   }
   .main-header h1 { color: #58a6ff; font-size: 2rem; margin: 0; }
   .main-header p  { color: #8b949e; margin: 4px 0 0; }
+
   .profile-card {
       background: linear-gradient(135deg, #161b22 0%, #1c2128 100%);
       border: 1px solid #30363d; border-radius: 16px;
@@ -65,13 +67,17 @@ st.markdown("""
   }
   .profile-card .display-name { font-size: 1.4rem; font-weight: 700; color: #e6edf3; }
   .profile-card .username-tag { color: #58a6ff; font-size: 1rem; }
-  .profile-card .bio-text { color: #c9d1d9; font-size: 0.95rem; margin: 12px 0; line-height: 1.7; }
+  .profile-card .bio-text {
+      color: #c9d1d9; font-size: 0.95rem; margin: 12px 0; line-height: 1.7;
+  }
+
   .stat-box {
       background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
       padding: 12px; text-align: center;
   }
   .stat-box .stat-num { font-size: 1.3rem; font-weight: 700; color: #58a6ff; }
   .stat-box .stat-lbl { font-size: 0.78rem; color: #8b949e; }
+
   .meta-badge {
       display: inline-block; background: #1f2937; border: 1px solid #374151;
       border-radius: 20px; padding: 4px 12px; font-size: 0.82rem; color: #9ca3af;
@@ -86,6 +92,65 @@ st.markdown("""
       padding: 8px 14px; font-family: monospace; font-size: 0.9rem;
       color: #f0e68c; direction: ltr; text-align: left;
   }
+
+  /* ── صورة الحساب المكبّرة ── */
+  .featured-image-container {
+      position: relative;
+      width: 100%;
+      margin: 0 0 0px 0;
+      border-radius: 16px 16px 0 0;
+      overflow: hidden;
+      border: 2px solid #30363d;
+      border-bottom: none;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      background: #0d1117;
+  }
+  .featured-image-container img {
+      width: 100%;
+      max-height: 520px;
+      object-fit: contain;
+      background: #0d1117;
+      display: block;
+  }
+  .featured-image-label {
+      position: absolute;
+      top: 12px;
+      right: 14px;
+      background: rgba(13,17,23,0.88);
+      border: 1px solid #30363d;
+      border-radius: 20px;
+      padding: 5px 16px;
+      font-size: 0.82rem;
+      color: #58a6ff;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+  }
+  .featured-image-container + .profile-card {
+      border-radius: 0 0 16px 16px;
+      border-top: none;
+      margin-top: 0;
+  }
+
+  /* ── منطقة السحب والإفلات ── */
+  .upload-hint {
+      background: linear-gradient(135deg, #0d1117, #161b22);
+      border: 2px dashed #30363d;
+      border-radius: 12px;
+      padding: 18px 24px;
+      text-align: center;
+      margin: 12px 0 4px 0;
+      direction: rtl;
+  }
+  .upload-hint-title {
+      font-size: 0.95rem;
+      color: #8b949e;
+      margin-bottom: 4px;
+  }
+  .upload-hint-sub {
+      font-size: 0.78rem;
+      color: #484f58;
+  }
+
   .stTextInput>div>div>input,
   .stTextArea>div>div>textarea {
       background-color: #161b22 !important;
@@ -129,8 +194,8 @@ NITTER_MIRRORS = [
     "https://nuku.trabun.org",
 ]
 
-FXTWITTER_API  = "https://api.fxtwitter.com"
-COOKIES_FILE   = "/tmp/twikit_cookies.json"
+FXTWITTER_API = "https://api.fxtwitter.com"
+COOKIES_FILE  = "/tmp/twikit_cookies.json"
 
 IMAGE_ANALYSIS_POINTS = [
     "الهوية البصرية والشعارات",
@@ -155,26 +220,24 @@ def clean_text(text: str) -> str:
     text = html_module.unescape(text)
     return text.strip()
 
+
 def extract_username(text: str) -> str:
     if not text:
         return ""
     text = text.strip()
-    # استخراج من رابط x.com أو twitter.com
     m = re.search(r'(?:twitter\.com|x\.com)/([A-Za-z0-9_.]{1,50})(?:\?|/|$)', text)
     if m:
         return m.group(1).rstrip("/")
-    # @ prefix
     if text.startswith("@"):
         return text[1:].split()[0].split("?")[0]
-    # اسم مباشر
     if re.match(r'^[A-Za-z0-9_.]{1,50}$', text):
         return text
-    # آخر جزء من المسار
     parts = text.rstrip("/").split("/")
     last = parts[-1].split("?")[0] if parts else ""
     if last and re.match(r'^[A-Za-z0-9_.]{1,50}$', last):
         return last
     return text.lstrip("@")
+
 
 def extract_tweet_id(text: str) -> str:
     if not text:
@@ -186,6 +249,7 @@ def extract_tweet_id(text: str) -> str:
         return text.strip()
     return ""
 
+
 def format_number(n) -> str:
     try:
         n = int(n)
@@ -196,6 +260,7 @@ def format_number(n) -> str:
         return str(n)
     except Exception:
         return str(n) if n else "0"
+
 
 def format_date(date_str: str) -> str:
     if not date_str:
@@ -212,18 +277,34 @@ def format_date(date_str: str) -> str:
         pass
     return date_str[:10]
 
+
 def image_to_base64(url: str) -> str:
     try:
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         r = requests.get(url, headers=headers, timeout=10, stream=True)
         if r.status_code == 200:
-            img = Image.open(BytesIO(r.content)).convert("RGB")
+            img = Image.open(BytesIO(r.content))
+            if img.mode in ("RGBA", "P", "LA", "CMYK"):
+                img = img.convert("RGB")
             buf = BytesIO()
             img.save(buf, format="JPEG", quality=85)
             return base64.b64encode(buf.getvalue()).decode()
     except Exception:
         pass
     return ""
+
+
+def pil_to_base64(img: Image.Image, quality: int = 92) -> str:
+    """تحويل كائن PIL Image إلى base64 بأمان."""
+    try:
+        if img.mode in ("RGBA", "P", "LA", "CMYK"):
+            img = img.convert("RGB")
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return ""
+
 
 # ══════════════════════════════════════════════════════════════
 #  جلب البيانات — twikit
@@ -239,13 +320,13 @@ def _run_async(coro):
         asyncio.set_event_loop(loop)
     return loop.run_until_complete(coro)
 
-async def _twikit_fetch(username: str, tw_user: str, tw_email: str, tw_pass: str) -> Optional[Dict]:
-    """يسجل دخول twikit ويجلب بيانات المستخدم."""
+
+async def _twikit_fetch(username: str, tw_user: str,
+                        tw_email: str, tw_pass: str) -> Optional[Dict]:
     if not TWIKIT_AVAILABLE:
         return None
     try:
         client = TwikitClient("en-US")
-        # تحميل الكوكيز المحفوظة
         if os.path.exists(COOKIES_FILE):
             client.load_cookies(COOKIES_FILE)
         else:
@@ -277,16 +358,18 @@ async def _twikit_fetch(username: str, tw_user: str, tw_email: str, tw_pass: str
         }
     except Exception as e:
         err = str(e)
-        # الكوكيز منتهية — احذفها وأعد المحاولة
-        if "cookies" in err.lower() or "auth" in err.lower() or "login" in err.lower():
+        if any(k in err.lower() for k in ["cookies", "auth", "login"]):
             if os.path.exists(COOKIES_FILE):
                 os.remove(COOKIES_FILE)
         return None
 
-def fetch_via_twikit(username: str, tw_user: str, tw_email: str, tw_pass: str) -> Optional[Dict]:
+
+def fetch_via_twikit(username: str, tw_user: str,
+                     tw_email: str, tw_pass: str) -> Optional[Dict]:
     if not tw_user or not tw_pass:
         return None
     return _run_async(_twikit_fetch(username, tw_user, tw_email, tw_pass))
+
 
 # ══════════════════════════════════════════════════════════════
 #  جلب البيانات — Nitter
@@ -295,7 +378,7 @@ def fetch_via_nitter(username: str, debug: bool = False) -> Optional[Dict]:
     headers = {
         "User-Agent":      random.choice(USER_AGENTS),
         "Accept-Language": "ar,en;q=0.9",
-        "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
     for mirror in NITTER_MIRRORS:
         url = f"{mirror}/{username}"
@@ -306,18 +389,18 @@ def fetch_via_nitter(username: str, debug: bool = False) -> Optional[Dict]:
                 st.caption(f"  {mirror} → HTTP {code}")
             if code != 200:
                 continue
-            # كشف Anubis / CAPTCHA / Not Found
             page_lower = r.text.lower()
-            if any(k in page_lower for k in ["proof-of-work", "anubis", "challenge", "captcha", "user not found"]):
+            if any(k in page_lower for k in
+                   ["proof-of-work", "anubis", "challenge", "captcha", "user not found"]):
                 if debug:
                     st.caption(f"  ⚠ {mirror} يحظر الوصول (bot protection)")
                 continue
 
             soup = BeautifulSoup(r.text, "html.parser")
 
-            # استخراج الاسم
             name = ""
-            for sel in [".profile-card-fullname", ".fullname", "h1.fullname", ".user-fullname"]:
+            for sel in [".profile-card-fullname", ".fullname",
+                         "h1.fullname", ".user-fullname"]:
                 el = soup.select_one(sel)
                 if el:
                     name = clean_text(el.text)
@@ -325,7 +408,6 @@ def fetch_via_nitter(username: str, debug: bool = False) -> Optional[Dict]:
             if not name:
                 continue
 
-            # استخراج الإحصاءات
             def get_stat(label_text):
                 for li in soup.select(".profile-stat"):
                     lbl = li.select_one(".profile-stat-header, .stat-header")
@@ -338,7 +420,6 @@ def fetch_via_nitter(username: str, debug: bool = False) -> Optional[Dict]:
             following = get_stat("Following")
             posts     = get_stat("Tweets")
 
-            # باقي الحقول
             bio_el  = soup.select_one(".profile-bio p, .bio")
             bio     = clean_text(bio_el.text) if bio_el else ""
 
@@ -358,12 +439,11 @@ def fetch_via_nitter(username: str, debug: bool = False) -> Optional[Dict]:
 
             verified = bool(soup.select_one(".verified-icon, .verified"))
 
-            # محاولة جلب user_id من RSS
             user_id = ""
             try:
-                rss_url = f"{mirror}/{username}/rss"
-                rss_r   = requests.get(rss_url, headers=headers, timeout=8)
-                uid_m   = re.search(r'<uri>.*?/(\d{5,})</uri>', rss_r.text)
+                rss_r = requests.get(f"{mirror}/{username}/rss",
+                                     headers=headers, timeout=8)
+                uid_m = re.search(r'<uri>.*?/(\d{5,})</uri>', rss_r.text)
                 if uid_m:
                     user_id = uid_m.group(1)
             except Exception:
@@ -390,13 +470,18 @@ def fetch_via_nitter(username: str, debug: bool = False) -> Optional[Dict]:
             continue
     return None
 
+
 # ══════════════════════════════════════════════════════════════
 #  جلب بيانات التغريدة — FxTwitter
 # ══════════════════════════════════════════════════════════════
 def fetch_tweet_data(tweet_id: str) -> Optional[Dict]:
     try:
         url = f"{FXTWITTER_API}/status/{tweet_id}"
-        r   = requests.get(url, headers={"User-Agent": random.choice(USER_AGENTS)}, timeout=15)
+        r   = requests.get(
+            url,
+            headers={"User-Agent": random.choice(USER_AGENTS)},
+            timeout=15
+        )
         if r.status_code != 200:
             return None
         tweet = r.json().get("tweet", {})
@@ -404,32 +489,38 @@ def fetch_tweet_data(tweet_id: str) -> Optional[Dict]:
             return None
         author = tweet.get("author", {})
         return {
-            "text":       clean_text(tweet.get("text", "")),
-            "likes":      tweet.get("likes",    0),
-            "retweets":   tweet.get("retweets", 0),
-            "replies":    tweet.get("replies",  0),
-            "views":      tweet.get("views",    0),
-            "date":       tweet.get("created_at", ""),
-            "lang":       tweet.get("lang", ""),
-            "url":        tweet.get("url", ""),
+            "text":            clean_text(tweet.get("text", "")),
+            "likes":           tweet.get("likes",    0),
+            "retweets":        tweet.get("retweets", 0),
+            "replies":         tweet.get("replies",  0),
+            "views":           tweet.get("views",    0),
+            "date":            tweet.get("created_at", ""),
+            "lang":            tweet.get("lang", ""),
+            "url":             tweet.get("url", ""),
             "author_name":     clean_text(author.get("name", "")),
             "author_username": author.get("screen_name", ""),
             "author_avatar":   author.get("avatar_url", ""),
-            "media":      tweet.get("media", {}).get("all", []),
+            "media":           tweet.get("media", {}).get("all", []),
         }
     except Exception:
         return None
+
 
 # ══════════════════════════════════════════════════════════════
 #  الدالة الرئيسية لجلب بيانات المستخدم
 # ══════════════════════════════════════════════════════════════
 def fetch_user_data(username: str, tw_user: str = "", tw_email: str = "",
                     tw_pass: str = "", debug: bool = False) -> Optional[Dict]:
-
     sources = []
     if tw_user and tw_pass:
-        sources.append(("🔵 twikit", lambda: fetch_via_twikit(username, tw_user, tw_email, tw_pass)))
-    sources.append(("🟠 Nitter mirrors", lambda: fetch_via_nitter(username, debug)))
+        sources.append((
+            "🔵 twikit",
+            lambda: fetch_via_twikit(username, tw_user, tw_email, tw_pass)
+        ))
+    sources.append((
+        "🟠 Nitter mirrors",
+        lambda: fetch_via_nitter(username, debug)
+    ))
 
     for label, func in sources:
         if debug:
@@ -441,13 +532,13 @@ def fetch_user_data(username: str, tw_user: str = "", tw_email: str = "",
             return data
         elif debug:
             st.caption(f"فشل: {label}")
-
     return None
+
 
 # ══════════════════════════════════════════════════════════════
 #  رندر بطاقة الملف الشخصي
 # ══════════════════════════════════════════════════════════════
-def render_profile_card(data: Dict):
+def render_profile_card(data: Dict, featured_image_b64: str = ""):
     name     = html_module.escape(data.get("name", ""))
     uname    = html_module.escape(data.get("username", ""))
     bio      = html_module.escape(data.get("bio", ""))
@@ -461,26 +552,32 @@ def render_profile_card(data: Dict):
     following = format_number(data.get("following", 0))
     posts     = format_number(data.get("posts", 0))
 
-    verified_badge = ' <span style="color:#1d9bf0" title="حساب موثق">✓</span>' if verified else ""
+    verified_badge = (
+        ' <span style="color:#1d9bf0" title="حساب موثق">✓</span>'
+        if verified else ""
+    )
 
-    # صورة البروفايل
+    # ── صورة البروفايل (أيقونة في البطاقة) ──
     img_url = data.get("profile_image", "")
     if img_url and img_url.startswith("http"):
         b64 = image_to_base64(img_url)
         img_src = f"data:image/jpeg;base64,{b64}" if b64 else img_url
     else:
-        img_src = "https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png"
+        img_src = ("https://abs.twimg.com/sticky/default_profile_images/"
+                   "default_profile_400x400.png")
 
     avatar_html = (
         '<img class="avatar-img" src="' + img_src + '" '
-        'onerror="this.src=\'https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png\'">'
+        'onerror="this.src=\'https://abs.twimg.com/sticky/default_profile_images/'
+        'default_profile_400x400.png\'">'
     )
 
     uid_html = ""
     if uid:
         uid_html = (
             '<div style="margin-top:12px">'
-            '<div style="font-size:0.8rem;color:#8b949e;margin-bottom:4px">🆔 معرّف المستخدم (User ID)</div>'
+            '<div style="font-size:0.8rem;color:#8b949e;margin-bottom:4px">'
+            '🆔 معرّف المستخدم (User ID)</div>'
             '<div class="uid-box">' + uid + '</div>'
             '</div>'
         )
@@ -496,29 +593,50 @@ def render_profile_card(data: Dict):
         meta_parts.append("📅 انضم في " + join)
     if source:
         meta_parts.append('<span class="source-tag">' + source + '</span>')
+    meta_html = "".join(
+        '<span class="meta-badge">' + p + '</span>' for p in meta_parts
+    )
 
-    meta_html = "".join('<span class="meta-badge">' + p + '</span>' for p in meta_parts)
+    # ── الصورة المكبّرة فوق البطاقة ──
+    featured_html = ""
+    if featured_image_b64:
+        featured_html = (
+            '<div class="featured-image-container">'
+            '<div class="featured-image-label">📷 صورة الحساب</div>'
+            '<img src="data:image/jpeg;base64,' + featured_image_b64 + '" '
+            'alt="صورة الحساب">'
+            '</div>'
+        )
 
     card = (
-        '<div class="profile-card" dir="rtl">'
-        '<div style="display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap">'
-        '<div>' + avatar_html + '</div>'
-        '<div style="flex:1;min-width:200px">'
-        '<div class="display-name">' + name + verified_badge + '</div>'
-        '<div class="username-tag">@' + uname + '</div>'
-        + bio_html +
-        '<div style="margin-top:8px">' + meta_html + '</div>'
-        + uid_html +
-        '</div>'
-        '</div>'
-        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:20px">'
-        '<div class="stat-box"><div class="stat-num">' + followers + '</div><div class="stat-lbl">متابع</div></div>'
-        '<div class="stat-box"><div class="stat-num">' + following + '</div><div class="stat-lbl">يتابع</div></div>'
-        '<div class="stat-box"><div class="stat-num">' + posts     + '</div><div class="stat-lbl">تغريدة</div></div>'
-        '</div>'
-        '</div>'
+        featured_html
+        + '<div class="profile-card" dir="rtl"'
+        + (' style="border-radius:0 0 16px 16px;border-top:none;margin-top:0"'
+           if featured_image_b64 else '')
+        + '>'
+        + '<div style="display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap">'
+        + '<div>' + avatar_html + '</div>'
+        + '<div style="flex:1;min-width:200px">'
+        + '<div class="display-name">' + name + verified_badge + '</div>'
+        + '<div class="username-tag">@' + uname + '</div>'
+        + bio_html
+        + '<div style="margin-top:8px">' + meta_html + '</div>'
+        + uid_html
+        + '</div>'
+        + '</div>'
+        + '<div style="display:grid;grid-template-columns:repeat(3,1fr);'
+          'gap:12px;margin-top:20px">'
+        + '<div class="stat-box"><div class="stat-num">' + followers
+          + '</div><div class="stat-lbl">متابع</div></div>'
+        + '<div class="stat-box"><div class="stat-num">' + following
+          + '</div><div class="stat-lbl">يتابع</div></div>'
+        + '<div class="stat-box"><div class="stat-num">' + posts
+          + '</div><div class="stat-lbl">تغريدة</div></div>'
+        + '</div>'
+        + '</div>'
     )
     st.markdown(card, unsafe_allow_html=True)
+
 
 # ══════════════════════════════════════════════════════════════
 #  معالجة أخطاء Gemini
@@ -533,6 +651,7 @@ def handle_gemini_error(e: Exception):
         st.error("❌ النموذج غير متاح. جرّب gemini-2.0-flash-lite أو gemini-1.5-pro.")
     else:
         st.error(f"خطأ Gemini: {str(e)[:200]}")
+
 
 # ══════════════════════════════════════════════════════════════
 #  الشريط الجانبي
@@ -580,7 +699,9 @@ def setup_sidebar():
             "لن يتم نشر أي شيء من حسابك."
         )
     elif use_twikit and not TWIKIT_AVAILABLE:
-        st.sidebar.warning("twikit غير مثبت.\nأضف `twikit>=2.0.0` في requirements.txt")
+        st.sidebar.warning(
+            "twikit غير مثبت.\nأضف `twikit>=2.0.0` في requirements.txt"
+        )
 
     # وضع التشخيص
     st.sidebar.markdown("---")
@@ -588,8 +709,9 @@ def setup_sidebar():
 
     return gemini_key, gemini_model, tw_user, tw_email, tw_pass, debug
 
+
 # ══════════════════════════════════════════════════════════════
-#  تبويب تحليل الحساب
+#  تبويب تحليل الحساب ✅ (مع السحب والإفلات)
 # ══════════════════════════════════════════════════════════════
 def account_tab(gemini_key, gemini_model, tw_user, tw_email, tw_pass, debug):
     st.markdown("### 👤 تحليل حساب X")
@@ -604,7 +726,38 @@ def account_tab(gemini_key, gemini_model, tw_user, tw_email, tw_pass, debug):
     with col2:
         fetch_btn = st.button("🔍 جلب البيانات", use_container_width=True)
 
-    # إدخال يدوي
+    # ── منطقة السحب والإفلات ──────────────────────────────────
+    st.markdown("""
+    <div class="upload-hint">
+      <div class="upload-hint-title">🖼 أضف صورة الحساب (اختياري)</div>
+      <div class="upload-hint-sub">
+          اسحب وأفلت صورة البروفايل أو البانر أو أي صورة من الحساب
+          — ستظهر بحجم كبير فوق بطاقة الملف الشخصي
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    uploaded_account_img = st.file_uploader(
+        "اسحب الصورة هنا أو انقر للاختيار",
+        type=["jpg", "jpeg", "png", "webp"],
+        key="account_img_uploader",
+        label_visibility="collapsed",
+    )
+
+    # معالجة الصورة المرفوعة
+    featured_b64 = ""
+    if uploaded_account_img:
+        try:
+            pil_img = Image.open(uploaded_account_img)
+            featured_b64 = pil_to_base64(pil_img, quality=92)
+            if featured_b64:
+                st.success("✅ تم تحميل الصورة — ستظهر بشكل مكبّر فوق بطاقة الحساب")
+            else:
+                st.warning("⚠ لم يتم معالجة الصورة بشكل صحيح.")
+        except Exception as e:
+            st.error(f"❌ خطأ في معالجة الصورة: {e}")
+
+    # ── إدخال يدوي ────────────────────────────────────────────
     with st.expander("✏️ إدخال البيانات يدوياً (دائماً يعمل)"):
         m_col1, m_col2 = st.columns(2)
         with m_col1:
@@ -613,16 +766,16 @@ def account_tab(gemini_key, gemini_model, tw_user, tw_email, tw_pass, debug):
             m_user_id  = st.text_input("User ID")
             m_bio      = st.text_area("النبذة", height=80)
         with m_col2:
-            m_followers = st.number_input("المتابعون",  min_value=0, step=1)
-            m_following = st.number_input("يتابع",      min_value=0, step=1)
-            m_posts     = st.number_input("التغريدات",  min_value=0, step=1)
+            m_followers = st.number_input("المتابعون", min_value=0, step=1)
+            m_following = st.number_input("يتابع",     min_value=0, step=1)
+            m_posts     = st.number_input("التغريدات", min_value=0, step=1)
             m_location  = st.text_input("الموقع")
             m_join      = st.text_input("تاريخ الانضمام (dd/mm/yyyy)")
         manual_btn = st.button("💾 استخدام البيانات اليدوية", use_container_width=True)
 
     data = None
 
-    # جلب تلقائي
+    # ── جلب تلقائي ────────────────────────────────────────────
     if fetch_btn and raw_input:
         username = extract_username(raw_input)
         if not username:
@@ -647,9 +800,21 @@ def account_tab(gemini_key, gemini_model, tw_user, tw_email, tw_pass, debug):
                 "1. أدخل بيانات حساب X في الشريط الجانبي لاستخدام twikit\n"
                 "2. استخدم الإدخال اليدوي أدناه ↓"
             )
+            # عرض الصورة حتى لو فشل جلب البيانات
+            if featured_b64:
+                st.markdown("---")
+                st.markdown("#### 🖼 الصورة المرفوعة")
+                st.markdown(
+                    '<div class="featured-image-container">'
+                    '<div class="featured-image-label">📷 صورة الحساب</div>'
+                    '<img src="data:image/jpeg;base64,' + featured_b64 + '" '
+                    'alt="صورة الحساب">'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
             return
 
-    # بيانات يدوية
+    # ── بيانات يدوية ──────────────────────────────────────────
     if manual_btn and m_name:
         data = {
             "name":          m_name,
@@ -670,20 +835,24 @@ def account_tab(gemini_key, gemini_model, tw_user, tw_email, tw_pass, debug):
     if not data:
         return
 
-    # عرض البطاقة
-    render_profile_card(data)
+    # ── عرض البطاقة مع الصورة المكبّرة ───────────────────────
+    render_profile_card(data, featured_image_b64=featured_b64)
 
-    # تحليل Gemini
+    # ── تحليل Gemini ──────────────────────────────────────────
     if gemini_key and GEMINI_AVAILABLE:
         st.markdown("---")
-        if st.button("🤖 توليد تقرير استخباراتي بـ Gemini"):
+        btn_label = (
+            "🤖 توليد تقرير استخباراتي مع تحليل الصورة"
+            if featured_b64
+            else "🤖 توليد تقرير استخباراتي بـ Gemini"
+        )
+        if st.button(btn_label):
             with st.spinner("يحلل Gemini..."):
                 try:
                     genai.configure(api_key=gemini_key)
                     model = genai.GenerativeModel(gemini_model)
-                    prompt = (
-                        f"أنت محلل استخباراتي متخصص في شبكات التواصل الاجتماعي.\n"
-                        f"حلّل الحساب التالي على منصة X وقدّم تقريراً شاملاً:\n\n"
+
+                    base_info = (
                         f"الاسم: {data.get('name','')}\n"
                         f"@{data.get('username','')}\n"
                         f"User ID: {data.get('user_id','')}\n"
@@ -693,20 +862,53 @@ def account_tab(gemini_key, gemini_model, tw_user, tw_email, tw_pass, debug):
                         f"التغريدات: {format_number(data.get('posts',0))}\n"
                         f"الموقع: {data.get('location','')}\n"
                         f"تاريخ الانضمام: {format_date(data.get('join_date',''))}\n"
-                        f"موثق: {'نعم' if data.get('verified') else 'لا'}\n\n"
-                        f"اكتب تقريراً يشمل: طبيعة الحساب، مؤشرات النشاط، "
-                        f"التأثير المحتمل، والملاحظات الاستخباراتية. باللغة العربية."
+                        f"موثق: {'نعم' if data.get('verified') else 'لا'}\n"
                     )
-                    response = model.generate_content(prompt)
+
+                    if featured_b64:
+                        prompt = (
+                            "أنت محلل استخباراتي متخصص في شبكات التواصل الاجتماعي.\n"
+                            "حلّل الحساب التالي والصورة المرفقة:\n\n"
+                            + base_info +
+                            "\nاكتب تقريراً يشمل:\n"
+                            "1. طبيعة الحساب وتوجهاته\n"
+                            "2. مؤشرات النشاط والتأثير\n"
+                            "3. تحليل الصورة المرفقة بالتفصيل "
+                            "(الهوية البصرية، المكان، الأشخاص، "
+                            "أي تفاصيل استخباراتية مهمة)\n"
+                            "4. الملاحظات الاستخباراتية العامة\n"
+                            "باللغة العربية."
+                        )
+                        image_part = {
+                            "mime_type": "image/jpeg",
+                            "data": featured_b64
+                        }
+                        response = model.generate_content([prompt, image_part])
+                    else:
+                        prompt = (
+                            "أنت محلل استخباراتي متخصص في شبكات التواصل الاجتماعي.\n"
+                            "حلّل الحساب التالي وقدّم تقريراً شاملاً:\n\n"
+                            + base_info +
+                            "\nاكتب تقريراً يشمل: طبيعة الحساب، مؤشرات النشاط، "
+                            "التأثير المحتمل، والملاحظات الاستخباراتية. "
+                            "باللغة العربية."
+                        )
+                        response = model.generate_content(prompt)
+
                     st.markdown("#### 📊 التقرير الاستخباراتي")
                     st.markdown(response.text)
                 except Exception as e:
                     handle_gemini_error(e)
+
     elif not GEMINI_AVAILABLE:
-        st.info("💡 ثبّت `google-generativeai` وأضف مفتاح Gemini لتفعيل التحليل الذكي.")
+        st.info(
+            "💡 ثبّت `google-generativeai` وأضف مفتاح Gemini "
+            "لتفعيل التحليل الذكي."
+        )
+
 
 # ══════════════════════════════════════════════════════════════
-#  تبويب تحليل التغريدة
+#  تبويب تحليل التغريدة ✅ (مع إصلاح RGBA)
 # ══════════════════════════════════════════════════════════════
 def tweet_tab(gemini_key, gemini_model):
     st.markdown("### 🐦 تحليل منشور (تغريدة)")
@@ -723,7 +925,8 @@ def tweet_tab(gemini_key, gemini_model):
 
     uploaded_img = st.file_uploader(
         "📷 أرفق صورة من التغريدة (اختياري)",
-        type=["jpg", "jpeg", "png", "webp"]
+        type=["jpg", "jpeg", "png", "webp"],
+        key="tweet_img_uploader",
     )
 
     tweet = None
@@ -739,22 +942,26 @@ def tweet_tab(gemini_key, gemini_model):
             return
 
     if tweet:
-        # إحصاءات
         st.markdown("#### 📊 إحصاءات المنشور")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("❤️ إعجاب",    format_number(tweet.get("likes",    0)))
+        c1.metric("❤️ إعجاب",     format_number(tweet.get("likes",    0)))
         c2.metric("🔁 إعادة نشر", format_number(tweet.get("retweets", 0)))
-        c3.metric("💬 رد",        format_number(tweet.get("replies",  0)))
+        c3.metric("💬 رد",         format_number(tweet.get("replies",  0)))
         c4.metric("👁 مشاهدة",    format_number(tweet.get("views",    0)))
 
         st.markdown("#### 📝 نص المنشور")
-        st.text_area("", value=tweet.get("text", ""), height=120, label_visibility="collapsed")
+        st.text_area(
+            "", value=tweet.get("text", ""),
+            height=120, label_visibility="collapsed"
+        )
 
         col_a, col_b = st.columns(2)
-        col_a.markdown(f"**الكاتب:** {tweet.get('author_name','')} (@{tweet.get('author_username','')})")
+        col_a.markdown(
+            f"**الكاتب:** {tweet.get('author_name','')} "
+            f"(@{tweet.get('author_username','')})"
+        )
         col_b.markdown(f"**التاريخ:** {format_date(tweet.get('date',''))}")
 
-        # وسائط
         media = tweet.get("media", [])
         if media:
             st.markdown("#### 🖼 وسائط المنشور")
@@ -765,40 +972,48 @@ def tweet_tab(gemini_key, gemini_model):
                     with cols[i]:
                         st.image(url, use_container_width=True)
 
-    # تحليل الصورة
+    # ── تحليل الصورة المرفوعة ─────────────────────────────────
     if uploaded_img and gemini_key and GEMINI_AVAILABLE:
         st.markdown("---")
         st.markdown("#### 🔎 تحليل الصورة")
-        img     = Image.open(uploaded_img)
-        buf     = BytesIO()
-        img.save(buf, format="JPEG")
-        img_b64 = base64.b64encode(buf.getvalue()).decode()
 
-        st.image(img, caption="الصورة المرفوعة", use_container_width=True)
+        try:
+            # ✅ إصلاح RGBA/PNG
+            pil_img  = Image.open(uploaded_img)
+            img_b64  = pil_to_base64(pil_img, quality=92)
 
-        if st.button("🤖 تحليل الصورة بـ Gemini"):
-            with st.spinner("يحلل الصورة..."):
-                try:
-                    genai.configure(api_key=gemini_key)
-                    model   = genai.GenerativeModel(gemini_model)
-                    points  = "\n".join(f"- {p}" for p in IMAGE_ANALYSIS_POINTS)
-                    prompt  = (
-                        f"أنت خبير OSINT متخصص في تحليل الصور من منصات التواصل.\n"
-                        f"حلّل هذه الصورة من تغريدة بشكل تفصيلي، وركّز على:\n{points}\n\n"
-                        f"قدّم كل نقطة في فقرة مستقلة. اكتب بالعربية."
-                    )
-                    image_part = {
-                        "mime_type": "image/jpeg",
-                        "data":      img_b64
-                    }
-                    response = model.generate_content([prompt, image_part])
-                    st.markdown("#### 🔍 نتائج تحليل الصورة")
-                    st.markdown(response.text)
-                except Exception as e:
-                    handle_gemini_error(e)
+            if not img_b64:
+                st.error("❌ فشل تحويل الصورة.")
+                return
+
+            st.image(pil_img, caption="الصورة المرفوعة", use_container_width=True)
+
+            if st.button("🤖 تحليل الصورة بـ Gemini"):
+                with st.spinner("يحلل الصورة..."):
+                    try:
+                        genai.configure(api_key=gemini_key)
+                        model  = genai.GenerativeModel(gemini_model)
+                        points = "\n".join(f"- {p}" for p in IMAGE_ANALYSIS_POINTS)
+                        prompt = (
+                            "أنت خبير OSINT متخصص في تحليل الصور من منصات التواصل.\n"
+                            f"حلّل هذه الصورة بشكل تفصيلي، وركّز على:\n{points}\n\n"
+                            "قدّم كل نقطة في فقرة مستقلة. اكتب بالعربية."
+                        )
+                        image_part = {
+                            "mime_type": "image/jpeg",
+                            "data":      img_b64
+                        }
+                        response = model.generate_content([prompt, image_part])
+                        st.markdown("#### 🔍 نتائج تحليل الصورة")
+                        st.markdown(response.text)
+                    except Exception as e:
+                        handle_gemini_error(e)
+        except Exception as e:
+            st.error(f"❌ خطأ في معالجة الصورة: {e}")
 
     elif uploaded_img and not GEMINI_AVAILABLE:
         st.info("💡 ثبّت `google-generativeai` وأضف مفتاح API لتحليل الصورة.")
+
 
 # ══════════════════════════════════════════════════════════════
 #  main
@@ -806,11 +1021,10 @@ def tweet_tab(gemini_key, gemini_model):
 def main():
     gemini_key, gemini_model, tw_user, tw_email, tw_pass, debug = setup_sidebar()
 
-    # رأس الصفحة
     st.markdown("""
     <div class="main-header">
       <h1>🔍 محلل حسابات X</h1>
-      <p>أداة تحليل استخباراتي لحسابات ومنشورات منصة X (تويتر) • v8.9</p>
+      <p>أداة تحليل استخباراتي لحسابات ومنشورات منصة X (تويتر) • v9.0</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -821,6 +1035,7 @@ def main():
 
     with tab2:
         tweet_tab(gemini_key, gemini_model)
+
 
 if __name__ == "__main__":
     main()
