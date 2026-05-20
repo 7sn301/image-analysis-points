@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# X Account & Post Analyzer v9.1
+# X Account & Post Analyzer v9.2
 
 import streamlit as st
 
@@ -59,9 +59,7 @@ body, .stApp { background-color: #0d1117; color: #e6edf3; }
     width: 120px; height: 120px; border-radius: 50%;
     border: 3px solid #58a6ff; object-fit: cover;
 }
-.profile-card .display-name {
-    font-size: 1.4rem; font-weight: 700; color: #e6edf3;
-}
+.profile-card .display-name { font-size: 1.4rem; font-weight: 700; color: #e6edf3; }
 .profile-card .username-tag { color: #58a6ff; font-size: 1rem; }
 .profile-card .bio-text {
     color: #c9d1d9; font-size: 0.95rem; margin: 12px 0; line-height: 1.7;
@@ -79,8 +77,7 @@ body, .stApp { background-color: #0d1117; color: #e6edf3; }
 }
 .source-tag {
     background: #0d3349; border: 1px solid #1d6896;
-    border-radius: 6px; padding: 3px 10px;
-    font-size: 0.78rem; color: #58a6ff;
+    border-radius: 6px; padding: 3px 10px; font-size: 0.78rem; color: #58a6ff;
 }
 .uid-box {
     background: #0d1117; border: 1px dashed #444;
@@ -89,11 +86,10 @@ body, .stApp { background-color: #0d1117; color: #e6edf3; }
     color: #f0e68c; direction: ltr; text-align: left;
 }
 .featured-image-container {
-    position: relative; width: 100%;
-    margin: 0; border-radius: 16px 16px 0 0;
-    overflow: hidden; border: 2px solid #30363d;
-    border-bottom: none; box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-    background: #0d1117;
+    position: relative; width: 100%; margin: 0;
+    border-radius: 16px 16px 0 0; overflow: hidden;
+    border: 2px solid #30363d; border-bottom: none;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6); background: #0d1117;
 }
 .featured-image-container img {
     width: 100%; max-height: 520px;
@@ -103,8 +99,7 @@ body, .stApp { background-color: #0d1117; color: #e6edf3; }
     position: absolute; top: 12px; right: 14px;
     background: rgba(13,17,23,0.88); border: 1px solid #30363d;
     border-radius: 20px; padding: 5px 16px;
-    font-size: 0.82rem; color: #58a6ff;
-    backdrop-filter: blur(8px);
+    font-size: 0.82rem; color: #58a6ff; backdrop-filter: blur(8px);
 }
 .upload-hint {
     background: linear-gradient(135deg, #0d1117, #161b22);
@@ -114,6 +109,20 @@ body, .stApp { background-color: #0d1117; color: #e6edf3; }
 }
 .upload-hint-title { font-size: 0.95rem; color: #8b949e; margin-bottom: 4px; }
 .upload-hint-sub { font-size: 0.78rem; color: #484f58; }
+.login-status-ok {
+    background: #0d2818; border: 1px solid #238636;
+    border-radius: 10px; padding: 12px 16px;
+    margin: 8px 0; direction: rtl;
+}
+.login-status-ok .ls-icon { font-size: 1.3rem; }
+.login-status-ok .ls-name { color: #3fb950; font-weight: 700; font-size: 1rem; }
+.login-status-ok .ls-user { color: #8b949e; font-size: 0.85rem; }
+.login-status-fail {
+    background: #2d0f0f; border: 1px solid #da3633;
+    border-radius: 10px; padding: 12px 16px; margin: 8px 0; direction: rtl;
+}
+.login-status-fail .ls-icon { font-size: 1.3rem; }
+.login-status-fail .ls-msg { color: #f85149; font-size: 0.9rem; }
 .stTextInput>div>div>input,
 .stTextArea>div>div>textarea {
     background-color: #161b22 !important;
@@ -271,7 +280,7 @@ def pil_to_base64(img: Image.Image, quality: int = 92) -> str:
 
 
 # ══════════════════════════════════════════════════════════════
-# twikit
+# twikit — دوال أساسية
 # ══════════════════════════════════════════════════════════════
 def _run_async(coro):
     try:
@@ -282,6 +291,63 @@ def _run_async(coro):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     return loop.run_until_complete(coro)
+
+
+async def _twikit_login(tw_user: str, tw_email: str, tw_pass: str):
+    """تسجيل الدخول وإرجاع الـ client أو None."""
+    if not TWIKIT_AVAILABLE:
+        return None, "twikit غير مثبت"
+    try:
+        client = TwikitClient("en-US")
+        if os.path.exists(COOKIES_FILE):
+            client.load_cookies(COOKIES_FILE)
+            return client, "cookies"
+        await client.login(
+            auth_info_1=tw_user,
+            auth_info_2=tw_email,
+            password=tw_pass,
+        )
+        client.save_cookies(COOKIES_FILE)
+        return client, "login"
+    except Exception as e:
+        if os.path.exists(COOKIES_FILE):
+            os.remove(COOKIES_FILE)
+        return None, str(e)
+
+
+async def _twikit_test_login(tw_user: str, tw_email: str, tw_pass: str) -> Dict:
+    """اختبار تسجيل الدخول وإرجاع نتيجة مفصّلة."""
+    if not TWIKIT_AVAILABLE:
+        return {"ok": False, "msg": "twikit غير مثبت في requirements.txt"}
+    if not tw_user or not tw_pass:
+        return {"ok": False, "msg": "يرجى إدخال اسم المستخدم وكلمة المرور"}
+    try:
+        client = TwikitClient("en-US")
+        # حذف الكوكيز القديمة لإجبار تسجيل دخول جديد
+        if os.path.exists(COOKIES_FILE):
+            os.remove(COOKIES_FILE)
+        await client.login(
+            auth_info_1=tw_user,
+            auth_info_2=tw_email,
+            password=tw_pass,
+        )
+        client.save_cookies(COOKIES_FILE)
+        # جلب بيانات الحساب للتأكيد
+        me = await client.get_user_by_screen_name(tw_user.lstrip("@"))
+        name = clean_text(me.name) if me else tw_user
+        screen = me.screen_name if me else tw_user
+        return {
+            "ok": True,
+            "name": name,
+            "screen_name": screen,
+            "msg": "تم تسجيل الدخول بنجاح وحفظ الجلسة",
+        }
+    except Exception as e:
+        return {"ok": False, "msg": str(e)[:200]}
+
+
+def test_twikit_login(tw_user: str, tw_email: str, tw_pass: str) -> Dict:
+    return _run_async(_twikit_test_login(tw_user, tw_email, tw_pass))
 
 
 async def _twikit_fetch(username: str, tw_user: str, tw_email: str, tw_pass: str) -> Optional[Dict]:
@@ -347,7 +413,7 @@ def fetch_via_nitter(username: str, debug: bool = False) -> Optional[Dict]:
             r = requests.get(url, headers=headers, timeout=12, allow_redirects=True)
             code = r.status_code
             if debug:
-                st.caption(f"  {mirror} → HTTP {code}")
+                st.caption(f"  {mirror} — HTTP {code}")
             if code != 200:
                 continue
 
@@ -436,7 +502,11 @@ def fetch_via_nitter(username: str, debug: bool = False) -> Optional[Dict]:
 def fetch_tweet_data(tweet_id: str) -> Optional[Dict]:
     try:
         url = f"{FXTWITTER_API}/status/{tweet_id}"
-        r = requests.get(url, headers={"User-Agent": random.choice(USER_AGENTS)}, timeout=15)
+        r = requests.get(
+            url,
+            headers={"User-Agent": random.choice(USER_AGENTS)},
+            timeout=15
+        )
         if r.status_code != 200:
             return None
         tweet = r.json().get("tweet", {})
@@ -464,11 +534,17 @@ def fetch_tweet_data(tweet_id: str) -> Optional[Dict]:
 # ══════════════════════════════════════════════════════════════
 # fetch_user_data
 # ══════════════════════════════════════════════════════════════
-def fetch_user_data(username: str, tw_user: str = "", tw_email: str = "", tw_pass: str = "", debug: bool = False) -> Optional[Dict]:
+def fetch_user_data(
+    username: str,
+    tw_user: str = "",
+    tw_email: str = "",
+    tw_pass: str = "",
+    debug: bool = False
+) -> Optional[Dict]:
     sources = []
     if tw_user and tw_pass:
-        sources.append(("twikit", lambda: fetch_via_twikit(username, tw_user, tw_email, tw_pass)))
-    sources.append(("Nitter mirrors", lambda: fetch_via_nitter(username, debug)))
+        sources.append(("🔵 twikit", lambda: fetch_via_twikit(username, tw_user, tw_email, tw_pass)))
+    sources.append(("🟠 Nitter mirrors", lambda: fetch_via_nitter(username, debug)))
 
     for label, func in sources:
         if debug:
@@ -476,7 +552,7 @@ def fetch_user_data(username: str, tw_user: str = "", tw_email: str = "", tw_pas
         data = func()
         if data and data.get("name"):
             if debug:
-                st.success(f"نجح: {label}")
+                st.success(f"✅ نجح: {label}")
             return data
         elif debug:
             st.caption(f"فشل: {label}")
@@ -578,13 +654,13 @@ def handle_gemini_error(e: Exception):
     elif "api_key" in err or "api key" in err or "invalid" in err:
         st.error("مفتاح Gemini غير صالح. تحقق منه في الشريط الجانبي.")
     elif "not found" in err or "404" in err:
-        st.error("النموذج غير متاح. جرّب gemini-2.0-flash-lite أو gemini-1.5-pro.")
+        st.error("النموذج غير متاح. جرّب gemini-2.0-flash-lite.")
     else:
         st.error(f"خطأ Gemini: {str(e)[:200]}")
 
 
 # ══════════════════════════════════════════════════════════════
-# setup_sidebar
+# setup_sidebar — مع زر تأكيد الدخول ✅
 # ══════════════════════════════════════════════════════════════
 def setup_sidebar():
     st.sidebar.markdown("## ⚙️ الإعدادات")
@@ -610,18 +686,101 @@ def setup_sidebar():
     tw_pass = ""
 
     if use_twikit and TWIKIT_AVAILABLE:
-        tw_user = st.sidebar.text_input("اسم المستخدم (@)", placeholder="your_account")
-        tw_email = st.sidebar.text_input("البريد الإلكتروني", placeholder="your@email.com")
-        tw_pass = st.sidebar.text_input("كلمة المرور", type="password")
+        tw_user = st.sidebar.text_input(
+            "اسم المستخدم (@)",
+            placeholder="your_account",
+            key="tw_user_input"
+        )
+        tw_email = st.sidebar.text_input(
+            "البريد الإلكتروني",
+            placeholder="your@email.com",
+            key="tw_email_input"
+        )
+        tw_pass = st.sidebar.text_input(
+            "كلمة المرور",
+            type="password",
+            key="tw_pass_input"
+        )
 
-        if st.sidebar.button("🗑 حذف الكوكيز"):
+        st.sidebar.markdown("---")
+
+        # ── زر تأكيد الدخول ───────────────────────────────
+        col_login, col_del = st.sidebar.columns(2)
+
+        with col_login:
+            login_btn = st.button(
+                "🔐 تأكيد الدخول",
+                use_container_width=True,
+                key="login_test_btn"
+            )
+        with col_del:
+            del_btn = st.button(
+                "🗑 حذف الجلسة",
+                use_container_width=True,
+                key="del_cookies_btn"
+            )
+
+        # معالجة حذف الجلسة
+        if del_btn:
             if os.path.exists(COOKIES_FILE):
                 os.remove(COOKIES_FILE)
-                st.sidebar.success("تم حذف الكوكيز")
+                st.sidebar.success("✅ تم حذف الجلسة المحفوظة")
             else:
-                st.sidebar.info("لا يوجد كوكيز محفوظة")
+                st.sidebar.info("لا توجد جلسة محفوظة")
 
-        st.sidebar.info("يُنصح باستخدام حساب ثانوي. لن يتم نشر أي شيء.")
+        # معالجة تأكيد الدخول
+        if login_btn:
+            if not tw_user or not tw_pass:
+                st.sidebar.error("❌ أدخل اسم المستخدم وكلمة المرور أولاً")
+            else:
+                with st.sidebar:
+                    with st.spinner("جاري تسجيل الدخول..."):
+                        result = test_twikit_login(tw_user, tw_email, tw_pass)
+
+                if result["ok"]:
+                    disp_name = html_module.escape(result.get("name", tw_user))
+                    disp_user = html_module.escape(result.get("screen_name", tw_user))
+                    st.sidebar.markdown(
+                        '<div class="login-status-ok">'
+                        '<div class="ls-icon">✅</div>'
+                        '<div class="ls-name">' + disp_name + '</div>'
+                        '<div class="ls-user">@' + disp_user + '</div>'
+                        '<div style="font-size:0.78rem;color:#3fb950;margin-top:4px">'
+                        'تم تسجيل الدخول بنجاح — الجلسة محفوظة</div>'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    err_msg = html_module.escape(result.get("msg", "خطأ غير معروف"))
+                    st.sidebar.markdown(
+                        '<div class="login-status-fail">'
+                        '<div class="ls-icon">❌</div>'
+                        '<div class="ls-msg">' + err_msg + '</div>'
+                        '<div style="font-size:0.75rem;color:#8b949e;margin-top:6px">'
+                        'تحقق من البيانات وأعد المحاولة</div>'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
+
+        # حالة الجلسة الحالية
+        if os.path.exists(COOKIES_FILE):
+            st.sidebar.markdown(
+                '<div style="background:#0d2818;border:1px solid #238636;'
+                'border-radius:8px;padding:8px 12px;margin-top:6px;'
+                'font-size:0.82rem;color:#3fb950;direction:rtl">'
+                '🟢 جلسة نشطة محفوظة</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.sidebar.markdown(
+                '<div style="background:#1c1c1c;border:1px solid #444;'
+                'border-radius:8px;padding:8px 12px;margin-top:6px;'
+                'font-size:0.82rem;color:#8b949e;direction:rtl">'
+                '⚪ لا توجد جلسة — سيتم تسجيل الدخول عند الطلب</div>',
+                unsafe_allow_html=True,
+            )
+
+        st.sidebar.info("💡 يُنصح باستخدام حساب ثانوي. لن يتم نشر أي شيء.")
 
     elif use_twikit and not TWIKIT_AVAILABLE:
         st.sidebar.warning("twikit غير مثبت. أضف twikit>=2.0.0 في requirements.txt")
@@ -712,7 +871,7 @@ def account_tab(gemini_key, gemini_model, tw_user, tw_email, tw_pass, debug):
                 "- اسم المستخدم غير صحيح\n"
                 "- Streamlit Cloud محظور من Twitter\n\n"
                 "الحلول:\n"
-                "1. أدخل بيانات حساب X في الشريط الجانبي لاستخدام twikit\n"
+                "1. أدخل بيانات حساب X واضغط (تأكيد الدخول) في الشريط الجانبي\n"
                 "2. استخدم الإدخال اليدوي أدناه"
             )
             if featured_b64:
@@ -918,7 +1077,7 @@ def main():
     st.markdown("""
     <div class="main-header">
       <h1>🔍 محلل حسابات X</h1>
-      <p>أداة تحليل استخباراتي لحسابات ومنشورات منصة X • v9.1</p>
+      <p>أداة تحليل استخباراتي لحسابات ومنشورات منصة X • v9.2</p>
     </div>
     """, unsafe_allow_html=True)
 
