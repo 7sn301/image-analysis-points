@@ -43,10 +43,12 @@ NITTER_MIRRORS = [
 
 FXTWITTER_API = "https://api.fxtwitter.com"
 
+# ✅ أسماء النماذج المُصحَّحة
 GEMINI_MODELS = {
-    "Gemini 2.5 Flash (موصى به)": "gemini-2.5-flash-preview-05-20",
-    "Gemini 2.5 Flash Lite": "gemini-2.5-flash-lite-preview-06-17",
-    "Gemini 2.5 Pro": "gemini-2.5-pro-preview-05-06",
+    "Gemini 2.5 Flash (موصى به)": "gemini-2.5-flash",
+    "Gemini 2.0 Flash Lite (اقتصادي)": "gemini-2.0-flash-lite",
+    "Gemini 2.5 Pro (متقدم)": "gemini-2.5-pro",
+    "Gemini 1.5 Flash (احتياطي)": "gemini-1.5-flash",
 }
 
 IMAGE_ANALYSIS_POINTS = {
@@ -412,7 +414,6 @@ def set_para_rtl_pptx(paragraph):
 # =================== تصدير Word ===================
 
 def _add_word_section(doc, text, heading_color=(0, 120, 212)):
-    """إضافة نص مُنسَّق للمستند مع دعم markdown بسيط"""
     for line in text.split('\n'):
         if not line.strip():
             p = doc.add_paragraph()
@@ -453,19 +454,17 @@ def export_to_word(title, account_data=None, tweet_data=None,
                    image_analysis_text="", exec_summary=""):
     doc = Document()
 
-    # RTL على مستوى المستند
     try:
         sectPr = doc.element.body.get_or_add_sectPr()
         etree.SubElement(sectPr, docx_qn('w:bidi'))
     except Exception:
         pass
 
-    # النمط الافتراضي
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(16)
 
-    # ── غلاف ──
+    # غلاف
     p = doc.add_paragraph()
     _set_rtl_para(p)
     r = p.add_run("🔍 محلل حسابات X الاستخباراتي")
@@ -480,19 +479,20 @@ def export_to_word(title, account_data=None, tweet_data=None,
 
     p = doc.add_paragraph()
     _set_rtl_para(p)
-    r = p.add_run(f"تاريخ التقرير: {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  {VERSION}")
+    r = p.add_run(
+        f"تاريخ التقرير: {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  {VERSION}"
+    )
     _set_run_font(r, font_size=14, color=(100, 100, 100))
 
     doc.add_page_break()
 
-    # ── الصور ──
+    # الصور
     if images_b64:
         h = doc.add_heading('الصور المرفقة', level=1)
         _set_rtl_para(h)
         if h.runs:
             h.runs[0].font.color.rgb = RGBColor(0, 120, 212)
             h.runs[0].font.size = Pt(20)
-
         for i, b64 in enumerate(images_b64[:3]):
             bio = base64_to_bytesio(b64)
             if bio:
@@ -505,7 +505,7 @@ def export_to_word(title, account_data=None, tweet_data=None,
                     pass
         doc.add_page_break()
 
-    # ── تحليل الصورة ──
+    # تحليل الصورة
     if image_analysis_text:
         h = doc.add_heading('تحليل الصورة بالذكاء الاصطناعي', level=1)
         _set_rtl_para(h)
@@ -515,14 +515,13 @@ def export_to_word(title, account_data=None, tweet_data=None,
         _add_word_section(doc, image_analysis_text)
         doc.add_page_break()
 
-    # ── بيانات الحساب ──
+    # بيانات الحساب
     if account_data:
         h = doc.add_heading('بيانات الحساب', level=1)
         _set_rtl_para(h)
         if h.runs:
             h.runs[0].font.color.rgb = RGBColor(0, 120, 212)
             h.runs[0].font.size = Pt(20)
-
         fields = [
             ("الاسم", account_data.get("name", "")),
             ("المستخدم", f"@{account_data.get('username', '')}"),
@@ -543,14 +542,13 @@ def export_to_word(title, account_data=None, tweet_data=None,
                 _set_run_font(vr, font_size=16)
         doc.add_page_break()
 
-    # ── بيانات التغريدة ──
+    # بيانات التغريدة
     if tweet_data:
         h = doc.add_heading('بيانات التغريدة', level=1)
         _set_rtl_para(h)
         if h.runs:
             h.runs[0].font.color.rgb = RGBColor(0, 120, 212)
             h.runs[0].font.size = Pt(20)
-
         fields = [
             ("الكاتب", tweet_data.get("author_name", "")),
             ("المستخدم", f"@{tweet_data.get('author_username', '')}"),
@@ -570,7 +568,7 @@ def export_to_word(title, account_data=None, tweet_data=None,
                 _set_run_font(vr, font_size=16)
         doc.add_page_break()
 
-    # ── تقرير التحليل ──
+    # تقرير التحليل
     if report_text:
         h = doc.add_heading('تقرير التحليل', level=1)
         _set_rtl_para(h)
@@ -580,19 +578,17 @@ def export_to_word(title, account_data=None, tweet_data=None,
         _add_word_section(doc, report_text)
         doc.add_page_break()
 
-    # ── الملخص التنفيذي (جديد v10.2) ──
+    # الملخص التنفيذي
     if exec_summary:
         h = doc.add_heading('الملخص التنفيذي', level=1)
         _set_rtl_para(h)
         if h.runs:
             h.runs[0].font.color.rgb = RGBColor(233, 69, 96)
             h.runs[0].font.size = Pt(22)
-
         p = doc.add_paragraph('─' * 60)
         _set_rtl_para(p)
         if p.runs:
             _set_run_font(p.runs[0], font_size=10, color=(233, 69, 96))
-
         _add_word_section(doc, exec_summary, heading_color=(233, 69, 96))
 
     buf = io.BytesIO()
@@ -624,7 +620,9 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
         fill.fore_color.rgb = color if color else DARK_BG
 
     def add_title_box(slide, text, top=Emu(300000), color=None, font_size=32):
-        txBox = slide.shapes.add_textbox(Emu(300000), top, W - Emu(600000), Emu(700000))
+        txBox = slide.shapes.add_textbox(
+            Emu(300000), top, W - Emu(600000), Emu(700000)
+        )
         tf = txBox.text_frame
         tf.word_wrap = True
         p = tf.paragraphs[0]
@@ -635,8 +633,11 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
         run.font.bold = True
         run.font.color.rgb = color if color else BLUE
 
-    def add_content_box(slide, text, top=Emu(1200000), height=Emu(3500000), font_size=16):
-        txBox = slide.shapes.add_textbox(Emu(300000), top, W - Emu(600000), height)
+    def add_content_box(slide, text, top=Emu(1200000),
+                        height=Emu(3500000), font_size=16):
+        txBox = slide.shapes.add_textbox(
+            Emu(300000), top, W - Emu(600000), height
+        )
         tf = txBox.text_frame
         tf.word_wrap = True
         first = True
@@ -667,11 +668,13 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
                 run.font.size = PPt(font_size)
                 run.font.color.rgb = WHITE
 
-    # ── غلاف ──
+    # غلاف
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_bg(slide)
 
-    box = slide.shapes.add_textbox(Emu(300000), Emu(500000), W - Emu(600000), Emu(800000))
+    box = slide.shapes.add_textbox(
+        Emu(300000), Emu(500000), W - Emu(600000), Emu(800000)
+    )
     tf = box.text_frame
     p = tf.paragraphs[0]
     set_para_rtl_pptx(p)
@@ -681,7 +684,9 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
     r.font.bold = True
     r.font.color.rgb = BLUE
 
-    box2 = slide.shapes.add_textbox(Emu(300000), Emu(1600000), W - Emu(600000), Emu(900000))
+    box2 = slide.shapes.add_textbox(
+        Emu(300000), Emu(1600000), W - Emu(600000), Emu(900000)
+    )
     tf2 = box2.text_frame
     tf2.word_wrap = True
     p2 = tf2.paragraphs[0]
@@ -692,7 +697,9 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
     r2.font.bold = True
     r2.font.color.rgb = WHITE
 
-    box3 = slide.shapes.add_textbox(Emu(300000), Emu(3600000), W - Emu(600000), Emu(500000))
+    box3 = slide.shapes.add_textbox(
+        Emu(300000), Emu(3600000), W - Emu(600000), Emu(500000)
+    )
     tf3 = box3.text_frame
     p3 = tf3.paragraphs[0]
     set_para_rtl_pptx(p3)
@@ -701,7 +708,7 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
     r3.font.size = PPt(16)
     r3.font.color.rgb = GRAY
 
-    # ── الصور ──
+    # الصور
     if images_b64:
         for i, b64 in enumerate(images_b64[:3]):
             slide = prs.slides.add_slide(prs.slide_layouts[6])
@@ -713,12 +720,12 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
                     slide.shapes.add_picture(
                         bio,
                         Emu(int(W * 0.1)), Emu(1000000),
-                        Emu(int(W * 0.8)), Emu(int(H * 0.7))
+                        Emu(int(W * 0.8)), Emu(int(H * 0.7)),
                     )
                 except Exception:
                     pass
 
-    # ── تحليل الصورة ──
+    # تحليل الصورة
     if image_analysis_text:
         lines = image_analysis_text.split('\n')
         chunks = [lines[i:i + 25] for i in range(0, len(lines), 25)]
@@ -729,7 +736,7 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
             add_title_box(slide, t, color=RED, font_size=28)
             add_content_box(slide, '\n'.join(chunk_lines), font_size=14)
 
-    # ── بيانات الحساب ──
+    # بيانات الحساب
     if account_data:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
         add_bg(slide)
@@ -744,7 +751,7 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
         ]
         add_content_box(slide, '\n'.join(fields), font_size=18)
 
-    # ── بيانات التغريدة ──
+    # بيانات التغريدة
     if tweet_data:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
         add_bg(slide)
@@ -759,7 +766,7 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
         ]
         add_content_box(slide, '\n'.join(fields), font_size=16)
 
-    # ── تقرير التحليل ──
+    # تقرير التحليل
     if report_text:
         lines = report_text.split('\n')
         chunks = [lines[i:i + 20] for i in range(0, len(lines), 20)]
@@ -770,7 +777,7 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
             add_title_box(slide, t, color=BLUE, font_size=28)
             add_content_box(slide, '\n'.join(chunk_lines), font_size=14)
 
-    # ── الملخص التنفيذي (جديد v10.2) ──
+    # الملخص التنفيذي
     if exec_summary:
         lines = exec_summary.split('\n')
         chunks = [lines[i:i + 18] for i in range(0, len(lines), 18)]
@@ -783,7 +790,6 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
             t = "📋 الملخص التنفيذي" if ci == 0 else f"📋 الملخص التنفيذي ({ci + 1})"
             add_title_box(slide, t, color=RED, font_size=30)
 
-            # خط فاصل
             try:
                 sep_box = slide.shapes.add_textbox(
                     Emu(300000), Emu(1020000), W - Emu(600000), Emu(60000)
@@ -797,12 +803,17 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
             except Exception:
                 pass
 
-            add_content_box(slide, '\n'.join(chunk_lines), top=Emu(1120000), font_size=15)
+            add_content_box(
+                slide, '\n'.join(chunk_lines),
+                top=Emu(1120000), font_size=15,
+            )
 
-    # ── شريحة ختامية ──
+    # شريحة ختامية
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_bg(slide)
-    end_box = slide.shapes.add_textbox(Emu(300000), Emu(2000000), W - Emu(600000), Emu(800000))
+    end_box = slide.shapes.add_textbox(
+        Emu(300000), Emu(2000000), W - Emu(600000), Emu(800000)
+    )
     tf = end_box.text_frame
     p = tf.paragraphs[0]
     set_para_rtl_pptx(p)
@@ -835,14 +846,17 @@ def render_export_buttons(title, account_data=None, tweet_data=None,
     with col1:
         try:
             word_bytes = export_to_word(
-                title=title, account_data=account_data, tweet_data=tweet_data,
-                report_text=report_text, images_b64=images_b64,
-                image_analysis_text=image_analysis_text, exec_summary=exec_summary,
+                title=title, account_data=account_data,
+                tweet_data=tweet_data, report_text=report_text,
+                images_b64=images_b64,
+                image_analysis_text=image_analysis_text,
+                exec_summary=exec_summary,
             )
             st.download_button(
                 "📄 تحميل Word", data=word_bytes,
                 file_name=f"{file_prefix}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                mime="application/vnd.openxmlformats-officedocument"
+                     ".wordprocessingml.document",
                 use_container_width=True,
             )
         except Exception as e:
@@ -851,21 +865,28 @@ def render_export_buttons(title, account_data=None, tweet_data=None,
     with col2:
         try:
             pptx_bytes = export_to_pptx(
-                title=title, account_data=account_data, tweet_data=tweet_data,
-                report_text=report_text, images_b64=images_b64,
-                image_analysis_text=image_analysis_text, exec_summary=exec_summary,
+                title=title, account_data=account_data,
+                tweet_data=tweet_data, report_text=report_text,
+                images_b64=images_b64,
+                image_analysis_text=image_analysis_text,
+                exec_summary=exec_summary,
             )
             st.download_button(
                 "📊 تحميل PowerPoint", data=pptx_bytes,
                 file_name=f"{file_prefix}.pptx",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                mime="application/vnd.openxmlformats-officedocument"
+                     ".presentationml.presentation",
                 use_container_width=True,
             )
         except Exception as e:
             st.error(f"خطأ PPTX: {e}")
 
     with col3:
-        parts = [f"تقرير: {title}", f"التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ""]
+        parts = [
+            f"تقرير: {title}",
+            f"التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "",
+        ]
         if report_text:
             parts += ["=== تقرير التحليل ===", report_text, ""]
         if image_analysis_text:
@@ -873,8 +894,10 @@ def render_export_buttons(title, account_data=None, tweet_data=None,
         if exec_summary:
             parts += ["=== الملخص التنفيذي ===", exec_summary, ""]
         st.download_button(
-            "📝 تحميل TXT", data='\n'.join(parts).encode('utf-8'),
-            file_name=f"{file_prefix}.txt", mime="text/plain",
+            "📝 تحميل TXT",
+            data='\n'.join(parts).encode('utf-8'),
+            file_name=f"{file_prefix}.txt",
+            mime="text/plain",
             use_container_width=True,
         )
 
@@ -893,11 +916,18 @@ def render_profile_card(data):
     avatar_b64 = data.get("avatar_b64", "")
     img_src = (
         f"data:image/jpeg;base64,{avatar_b64}" if avatar_b64
-        else "https://abs.twimg.com/sticky/default_profile_images/default_profile_400x400.png"
+        else "https://abs.twimg.com/sticky/default_profile_images/"
+             "default_profile_400x400.png"
     )
     verified_badge = "✅ " if data.get("verified") else ""
-    loc_row = f'<div style="color:#aaa;margin-top:4px;">📍 {location}</div>' if location else ''
-    join_row = f'<div style="color:#aaa;margin-top:4px;">📅 {joined}</div>' if joined else ''
+    loc_row = (
+        f'<div style="color:#aaa;margin-top:4px;">📍 {location}</div>'
+        if location else ''
+    )
+    join_row = (
+        f'<div style="color:#aaa;margin-top:4px;">📅 {joined}</div>'
+        if joined else ''
+    )
 
     st.markdown(f"""
     <div style="background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);
@@ -906,25 +936,37 @@ def render_profile_card(data):
                 font-family:'Segoe UI',Arial,sans-serif;margin-bottom:20px;">
         <div style="display:flex;align-items:center;gap:20px;flex-direction:row-reverse;">
             <img src="{img_src}"
-                 style="width:80px;height:80px;border-radius:50%;border:3px solid #0078d4;"/>
+                 style="width:80px;height:80px;border-radius:50%;
+                        border:3px solid #0078d4;"/>
             <div>
-                <div style="font-size:22px;font-weight:bold;color:#fff;">{verified_badge}{name}</div>
+                <div style="font-size:22px;font-weight:bold;color:#fff;">
+                    {verified_badge}{name}
+                </div>
                 <div style="color:#0078d4;font-size:16px;">@{username}</div>
             </div>
         </div>
-        <div style="color:#ddd;margin-top:12px;font-size:15px;line-height:1.7;">{bio_html}</div>
+        <div style="color:#ddd;margin-top:12px;font-size:15px;line-height:1.7;">
+            {bio_html}
+        </div>
         {loc_row}{join_row}
-        <div style="display:flex;justify-content:flex-end;gap:30px;margin-top:16px;flex-wrap:wrap;">
+        <div style="display:flex;justify-content:flex-end;gap:30px;
+                    margin-top:16px;flex-wrap:wrap;">
             <div style="text-align:center;">
-                <div style="font-size:20px;font-weight:bold;color:#0078d4;">{followers}</div>
+                <div style="font-size:20px;font-weight:bold;color:#0078d4;">
+                    {followers}
+                </div>
                 <div style="color:#aaa;font-size:13px;">متابع</div>
             </div>
             <div style="text-align:center;">
-                <div style="font-size:20px;font-weight:bold;color:#0078d4;">{following}</div>
+                <div style="font-size:20px;font-weight:bold;color:#0078d4;">
+                    {following}
+                </div>
                 <div style="color:#aaa;font-size:13px;">يتابع</div>
             </div>
             <div style="text-align:center;">
-                <div style="font-size:20px;font-weight:bold;color:#0078d4;">{tweets}</div>
+                <div style="font-size:20px;font-weight:bold;color:#0078d4;">
+                    {tweets}
+                </div>
                 <div style="color:#aaa;font-size:13px;">تغريدة</div>
             </div>
         </div>
@@ -950,12 +992,16 @@ def display_tweet_card(data):
                 padding:16px;direction:rtl;text-align:right;
                 font-family:'Segoe UI',Arial,sans-serif;margin-bottom:16px;">
         <div style="margin-bottom:10px;">
-            <span style="color:#fff;font-weight:bold;">{verified_badge}{author}</span>
+            <span style="color:#fff;font-weight:bold;">
+                {verified_badge}{author}
+            </span>
             <span style="color:#0078d4;margin-right:8px;">@{username}</span>
         </div>
-        <div style="color:#eee;font-size:16px;line-height:1.8;margin-bottom:12px;">{text_html}</div>
-        <div style="display:flex;gap:20px;justify-content:flex-end;flex-wrap:wrap;
-                    color:#aaa;font-size:14px;">
+        <div style="color:#eee;font-size:16px;line-height:1.8;margin-bottom:12px;">
+            {text_html}
+        </div>
+        <div style="display:flex;gap:20px;justify-content:flex-end;
+                    flex-wrap:wrap;color:#aaa;font-size:14px;">
             <span>❤️ {likes}</span>
             <span>🔁 {retweets}</span>
             <span>💬 {replies}</span>
@@ -985,7 +1031,9 @@ def account_tab(api_key, model_name):
             key="account_username",
         )
 
-    if st.button("🔍 جلب بيانات الحساب", key="btn_fetch_account", use_container_width=True):
+    if st.button(
+        "🔍 جلب بيانات الحساب", key="btn_fetch_account", use_container_width=True
+    ):
         if username_input:
             with st.spinner("جاري جلب البيانات..."):
                 data, err = fetch_nitter(username_input)
@@ -1012,12 +1060,18 @@ def account_tab(api_key, model_name):
     )
 
     if uploaded_profile and api_key:
-        if st.button("🔍 تحليل صورة الملف الشخصي", key="btn_analyze_profile_img"):
+        if st.button(
+            "🔍 تحليل صورة الملف الشخصي", key="btn_analyze_profile_img"
+        ):
             with st.spinner("جاري التحليل..."):
-                point = st.session_state.get('account_analysis_point',
-                                             list(IMAGE_ANALYSIS_POINTS.keys())[0])
+                point = st.session_state.get(
+                    'account_analysis_point',
+                    list(IMAGE_ANALYSIS_POINTS.keys())[0],
+                )
                 prompt = IMAGE_ANALYSIS_POINTS[point]
-                result = gemini_with_images(prompt, [profile_img_b64], api_key, model_name)
+                result = gemini_with_images(
+                    prompt, [profile_img_b64], api_key, model_name
+                )
                 st.session_state['account_img_analysis'] = result
                 st.success("✅ تم حفظ تحليل الصورة")
 
@@ -1026,14 +1080,18 @@ def account_tab(api_key, model_name):
         img_html = safe_html_lines(st.session_state['account_img_analysis'])
         st.markdown(
             f'<div style="background:#0f3460;border-radius:10px;padding:16px;'
-            f'direction:rtl;text-align:right;color:#eee;line-height:1.8;">{img_html}</div>',
+            f'direction:rtl;text-align:right;color:#eee;line-height:1.8;">'
+            f'{img_html}</div>',
             unsafe_allow_html=True,
         )
 
     if account_data and api_key:
         st.markdown("---")
-        if st.button("📊 توليد تقرير تحليل الحساب", key="btn_account_report",
-                     use_container_width=True):
+        if st.button(
+            "📊 توليد تقرير تحليل الحساب",
+            key="btn_account_report",
+            use_container_width=True,
+        ):
             prompt = (
                 "أنت محلل استخباراتي متخصص. قم بتحليل حساب X التالي وإعداد تقرير شامل:\n\n"
                 f"الاسم: {account_data.get('name', '')}\n"
@@ -1044,7 +1102,8 @@ def account_tab(api_key, model_name):
                 f"المتابعون: {format_number(account_data.get('followers_count', 0))}\n"
                 f"يتابع: {format_number(account_data.get('following_count', 0))}\n"
                 f"التغريدات: {format_number(account_data.get('tweets_count', 0))}\n"
-                f"تحليل الصورة الشخصية: {st.session_state.get('account_img_analysis', 'لم يتم تحليل الصورة')}\n\n"
+                f"تحليل الصورة: "
+                f"{st.session_state.get('account_img_analysis', 'لم يتم تحليل الصورة')}\n\n"
                 "قم بإعداد تقرير يشمل:\n"
                 "## 1. ملخص هوية الحساب\n"
                 "## 2. مستوى النشاط والتفاعل\n"
@@ -1064,7 +1123,8 @@ def account_tab(api_key, model_name):
         r_html = safe_html_lines(st.session_state['account_report'])
         st.markdown(
             f'<div style="background:#16213e;border-radius:10px;padding:20px;'
-            f'direction:rtl;text-align:right;color:#eee;line-height:1.8;">{r_html}</div>',
+            f'direction:rtl;text-align:right;color:#eee;line-height:1.8;">'
+            f'{r_html}</div>',
             unsafe_allow_html=True,
         )
         imgs = [profile_img_b64] if profile_img_b64 else None
@@ -1089,7 +1149,9 @@ def tweet_tab(api_key, model_name):
         key="tweet_input",
     )
 
-    if st.button("🔍 جلب بيانات التغريدة", key="btn_fetch_tweet", use_container_width=True):
+    if st.button(
+        "🔍 جلب بيانات التغريدة", key="btn_fetch_tweet", use_container_width=True
+    ):
         if tweet_input:
             with st.spinner("جاري جلب التغريدة..."):
                 data, err = fetch_fxtwitter(tweet_input)
@@ -1112,7 +1174,6 @@ def tweet_tab(api_key, model_name):
                 if bio:
                     cols[i].image(bio, caption=f"صورة {i + 1}")
 
-    # رفع صور
     st.markdown("---")
     uploaded_imgs = st.file_uploader(
         "رفع صور للتحليل (يمكن رفع عدة صور)",
@@ -1136,19 +1197,24 @@ def tweet_tab(api_key, model_name):
             uf.seek(0)
             cols[i].image(Image.open(uf), caption=uf.name, width=200)
 
-    # تحليل الصور
     if all_images_b64 and api_key:
         st.selectbox(
             "اختر نقطة تحليل الصورة",
             list(IMAGE_ANALYSIS_POINTS.keys()),
             key="tweet_analysis_point",
         )
-        if st.button("🔍 تحليل الصور", key="btn_analyze_tweet_imgs", use_container_width=True):
+        if st.button(
+            "🔍 تحليل الصور", key="btn_analyze_tweet_imgs", use_container_width=True
+        ):
             with st.spinner("جاري تحليل الصور..."):
-                point = st.session_state.get('tweet_analysis_point',
-                                             list(IMAGE_ANALYSIS_POINTS.keys())[0])
+                point = st.session_state.get(
+                    'tweet_analysis_point',
+                    list(IMAGE_ANALYSIS_POINTS.keys())[0],
+                )
                 prompt = IMAGE_ANALYSIS_POINTS[point]
-                result = gemini_with_images(prompt, all_images_b64[:3], api_key, model_name)
+                result = gemini_with_images(
+                    prompt, all_images_b64[:3], api_key, model_name
+                )
                 st.session_state['tweet_img_analysis'] = result
                 st.success("✅ تم حفظ تحليل الصورة")
 
@@ -1157,25 +1223,30 @@ def tweet_tab(api_key, model_name):
         img_html = safe_html_lines(st.session_state['tweet_img_analysis'])
         st.markdown(
             f'<div style="background:#0f3460;border-radius:10px;padding:16px;'
-            f'direction:rtl;text-align:right;color:#eee;line-height:1.8;">{img_html}</div>',
+            f'direction:rtl;text-align:right;color:#eee;line-height:1.8;">'
+            f'{img_html}</div>',
             unsafe_allow_html=True,
         )
 
-    # تحليل النص
     if tweet_data and api_key:
         st.markdown("---")
-        if st.button("📝 تحليل نص التغريدة", key="btn_analyze_tweet_text",
-                     use_container_width=True):
+        if st.button(
+            "📝 تحليل نص التغريدة",
+            key="btn_analyze_tweet_text",
+            use_container_width=True,
+        ):
             prompt = (
                 "أنت محلل استخباراتي. حلّل التغريدة التالية:\n\n"
                 f"النص: {tweet_data.get('text', '')}\n"
-                f"الكاتب: {tweet_data.get('author_name', '')} (@{tweet_data.get('author_username', '')})\n"
+                f"الكاتب: {tweet_data.get('author_name', '')} "
+                f"(@{tweet_data.get('author_username', '')})\n"
                 f"التاريخ: {format_date(tweet_data.get('created_at', ''))}\n"
                 f"الإعجابات: {format_number(tweet_data.get('likes', 0))}\n"
                 f"إعادة التغريد: {format_number(tweet_data.get('retweets', 0))}\n"
                 f"المشاهدات: {format_number(tweet_data.get('views', 0))}\n"
                 f"المتابعون: {format_number(tweet_data.get('author_followers', 0))}\n"
-                f"تحليل الصورة: {st.session_state.get('tweet_img_analysis', 'لا توجد صور')}\n\n"
+                f"تحليل الصورة: "
+                f"{st.session_state.get('tweet_img_analysis', 'لا توجد صور')}\n\n"
                 "قدّم تقريراً يشمل:\n"
                 "## 1. تحليل المحتوى\n"
                 "## 2. تحليل اللغة والأسلوب\n"
@@ -1195,11 +1266,12 @@ def tweet_tab(api_key, model_name):
         a_html = safe_html_lines(st.session_state['tweet_analysis'])
         st.markdown(
             f'<div style="background:#16213e;border-radius:10px;padding:20px;'
-            f'direction:rtl;text-align:right;color:#eee;line-height:1.8;">{a_html}</div>',
+            f'direction:rtl;text-align:right;color:#eee;line-height:1.8;">'
+            f'{a_html}</div>',
             unsafe_allow_html=True,
         )
 
-    # ── الملخص التنفيذي (v10.2) ──
+    # ── الملخص التنفيذي ──
     if tweet_data and api_key:
         st.markdown("---")
         st.markdown("""
@@ -1213,13 +1285,17 @@ def tweet_tab(api_key, model_name):
             </p>
         </div>""", unsafe_allow_html=True)
 
-        if st.button("🧠 توليد الملخص التنفيذي الشامل", key="btn_exec_summary",
-                     use_container_width=True):
+        if st.button(
+            "🧠 توليد الملخص التنفيذي الشامل",
+            key="btn_exec_summary",
+            use_container_width=True,
+        ):
             context_parts = []
 
             tweet_info = (
                 "بيانات التغريدة:\n"
-                f"- الكاتب: {tweet_data.get('author_name', '')} (@{tweet_data.get('author_username', '')})\n"
+                f"- الكاتب: {tweet_data.get('author_name', '')} "
+                f"(@{tweet_data.get('author_username', '')})\n"
                 f"- النص: {tweet_data.get('text', '')}\n"
                 f"- التاريخ: {format_date(tweet_data.get('created_at', ''))}\n"
                 f"- الإعجابات: {format_number(tweet_data.get('likes', 0))}"
@@ -1230,12 +1306,14 @@ def tweet_tab(api_key, model_name):
 
             if st.session_state.get('tweet_analysis'):
                 context_parts.append(
-                    "تحليل النص:\n" + st.session_state['tweet_analysis'][:1500]
+                    "تحليل النص:\n"
+                    + st.session_state['tweet_analysis'][:1500]
                 )
 
             if st.session_state.get('tweet_img_analysis'):
                 context_parts.append(
-                    "تحليل الصورة:\n" + st.session_state['tweet_img_analysis'][:1000]
+                    "تحليل الصورة:\n"
+                    + st.session_state['tweet_img_analysis'][:1000]
                 )
 
             sep = "\n---\n"
@@ -1258,7 +1336,8 @@ def tweet_tab(api_key, model_name):
                 "(إجراءات يُنصح باتخاذها خلال 24-48 ساعة)\n\n"
                 "### 📌 التوصيات الاستراتيجية\n"
                 "(توصيات متوسطة وبعيدة المدى)\n\n"
-                "اكتب الملخص باللغة العربية بأسلوب احترافي رسمي مناسب للتقارير الاستخباراتية."
+                "اكتب الملخص باللغة العربية بأسلوب احترافي رسمي "
+                "مناسب للتقارير الاستخباراتية."
             )
 
             with st.spinner("⏳ جاري توليد الملخص التنفيذي..."):
@@ -1273,21 +1352,30 @@ def tweet_tab(api_key, model_name):
                     border:2px solid #e94560;border-radius:14px;padding:24px;
                     direction:rtl;text-align:right;
                     font-family:'Segoe UI',Arial,sans-serif;
-                    margin-top:16px;box-shadow:0 4px 20px rgba(233,69,96,0.3);">
+                    margin-top:16px;
+                    box-shadow:0 4px 20px rgba(233,69,96,0.3);">
             <div style="display:flex;align-items:center;gap:10px;
                         flex-direction:row-reverse;margin-bottom:16px;">
                 <span style="font-size:28px;">📋</span>
-                <h2 style="color:#e94560;margin:0;font-size:22px;">الملخص التنفيذي</h2>
+                <h2 style="color:#e94560;margin:0;font-size:22px;">
+                    الملخص التنفيذي
+                </h2>
             </div>
-            <div style="color:#eee;font-size:16px;line-height:1.9;">{exec_html}</div>
+            <div style="color:#eee;font-size:16px;line-height:1.9;">
+                {exec_html}
+            </div>
         </div>""", unsafe_allow_html=True)
 
-    # أزرار التصدير
-    if (st.session_state.get('tweet_analysis')
-            or st.session_state.get('tweet_img_analysis')
-            or st.session_state.get('exec_summary')):
+    if (
+        st.session_state.get('tweet_analysis')
+        or st.session_state.get('tweet_img_analysis')
+        or st.session_state.get('exec_summary')
+    ):
         render_export_buttons(
-            title=f"تحليل تغريدة @{tweet_data.get('author_username', '') if tweet_data else 'X'}",
+            title=(
+                f"تحليل تغريدة @"
+                f"{tweet_data.get('author_username', '') if tweet_data else 'X'}"
+            ),
             tweet_data=tweet_data,
             report_text=st.session_state.get('tweet_analysis', ''),
             images_b64=all_images_b64[:3] if all_images_b64 else None,
@@ -1310,7 +1398,9 @@ def render_sidebar():
             placeholder="أدخل مفتاح Gemini API...",
             key="gemini_api_key",
         )
-        st.markdown("[🔗 احصل على مفتاح مجاني](https://aistudio.google.com/apikey)")
+        st.markdown(
+            "[🔗 احصل على مفتاح مجاني](https://aistudio.google.com/apikey)"
+        )
 
         if api_key:
             st.success("✅ المفتاح مُدرج")
@@ -1393,8 +1483,14 @@ def main():
         color: white; border: none; border-radius: 8px;
         font-size: 15px;
     }
-    h1, h2, h3 { color: #0078d4 !important; direction: rtl; text-align: right; }
-    .stTabs [data-baseweb="tab"] { font-size: 16px; font-weight: 600; color: #eee; }
+    h1, h2, h3 {
+        color: #0078d4 !important;
+        direction: rtl;
+        text-align: right;
+    }
+    .stTabs [data-baseweb="tab"] {
+        font-size: 16px; font-weight: 600; color: #eee;
+    }
     .stTabs [aria-selected="true"] {
         color: #0078d4 !important;
         border-bottom: 2px solid #0078d4;
@@ -1402,7 +1498,6 @@ def main():
     div[data-testid="stSidebarContent"] { background: #0f0f2a; }
     </style>""", unsafe_allow_html=True)
 
-    # تهيئة session_state
     for key in [
         'account_data', 'tweet_data', 'account_report', 'tweet_analysis',
         'account_img_analysis', 'tweet_img_analysis',
