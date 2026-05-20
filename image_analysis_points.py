@@ -22,7 +22,6 @@ from pptx.dml.color import RGBColor as PRGBColor
 from pptx.enum.text import PP_ALIGN
 import lxml.etree as etree
 
-# ===================== الثوابت =====================
 PAGE_TITLE = "محلل حسابات X الاستخباراتي"
 PAGE_ICON = "🔍"
 VERSION = "v10.2"
@@ -43,7 +42,6 @@ NITTER_MIRRORS = [
 
 FXTWITTER_API = "https://api.fxtwitter.com"
 
-# ✅ أسماء النماذج المُصحَّحة
 GEMINI_MODELS = {
     "Gemini 2.5 Flash (موصى به)": "gemini-2.5-flash",
     "Gemini 2.0 Flash Lite (اقتصادي)": "gemini-2.0-flash-lite",
@@ -213,6 +211,66 @@ def download_image_b64(url):
     except Exception:
         pass
     return ""
+
+
+# ✅ دالة مساعدة جديدة: حساب أبعاد الصورة مع الحفاظ على النسب
+def calc_image_size_word(b64_str, max_w_inch=5.5, max_h_inch=7.0):
+    """
+    تحسب العرض/الارتفاع المناسبَين بالإنشات مع الحفاظ على نسبة الأبعاد.
+    تُعيد (width=Inches(x), None) أو (None, height=Inches(y))
+    حسب الجانب المُقيَّد.
+    """
+    try:
+        bio = base64_to_bytesio(b64_str)
+        img = Image.open(bio)
+        img_w, img_h = img.size
+        aspect = img_h / img_w  # نسبة الارتفاع إلى العرض
+
+        if aspect * max_w_inch <= max_h_inch:
+            # العرض هو المُقيَّد
+            return {"width": Inches(max_w_inch)}
+        else:
+            # الارتفاع هو المُقيَّد
+            return {"height": Inches(max_h_inch)}
+    except Exception:
+        return {"width": Inches(5.0)}
+
+
+def calc_image_size_pptx(b64_str, slide_w, slide_h,
+                          max_w_ratio=0.78, max_h_ratio=0.62):
+    """
+    تحسب left, top, width, height بوحدة EMU مع الحفاظ على نسبة الأبعاد
+    وتمركز الصورة أفقياً وعمودياً في المساحة المتاحة.
+    """
+    try:
+        bio = base64_to_bytesio(b64_str)
+        img = Image.open(bio)
+        img_w, img_h = img.size
+        aspect = img_h / img_w
+
+        max_w = int(slide_w * max_w_ratio)
+        max_h = int(slide_h * max_h_ratio)
+
+        if aspect * max_w <= max_h:
+            pic_w = max_w
+            pic_h = int(aspect * max_w)
+        else:
+            pic_h = max_h
+            pic_w = int(pic_h / aspect)
+
+        # توسيط أفقي، وإبقاء هامش علوي ثابت بعد العنوان
+        left = int((slide_w - pic_w) / 2)
+        top_offset = Emu(1050000)   # أسفل العنوان مباشرة
+        top = top_offset + int((max_h - pic_h) / 2)
+
+        return left, top, pic_w, pic_h
+    except Exception:
+        return (
+            int(slide_w * 0.1),
+            Emu(1050000),
+            int(slide_w * 0.8),
+            int(slide_h * 0.62),
+        )
 
 
 # =================== جلب بيانات Nitter ===================
@@ -486,20 +544,31 @@ def export_to_word(title, account_data=None, tweet_data=None,
 
     doc.add_page_break()
 
-    # الصور
+    # ── الصور مع الحفاظ على النسب ──
     if images_b64:
         h = doc.add_heading('الصور المرفقة', level=1)
         _set_rtl_para(h)
         if h.runs:
             h.runs[0].font.color.rgb = RGBColor(0, 120, 212)
             h.runs[0].font.size = Pt(20)
+
         for i, b64 in enumerate(images_b64[:3]):
             bio = base64_to_bytesio(b64)
             if bio:
                 try:
-                    p = doc.add_paragraph(f"صورة {i + 1}")
-                    _set_rtl_para(p)
-                    doc.add_picture(bio, width=Inches(4.5))
+                    # ✅ عنوان الصورة
+                    cap = doc.add_paragraph(f"صورة {i + 1}")
+                    _set_rtl_para(cap)
+                    if cap.runs:
+                        _set_run_font(
+                            cap.runs[0], font_size=14,
+                            bold=True, color=(80, 80, 80)
+                        )
+                    # ✅ حساب الأبعاد مع الحفاظ على النسبة الأصلية
+                    size_kwargs = calc_image_size_word(
+                        b64, max_w_inch=5.5, max_h_inch=7.0
+                    )
+                    doc.add_picture(bio, **size_kwargs)
                     doc.add_paragraph()
                 except Exception:
                     pass
@@ -708,20 +777,23 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
     r3.font.size = PPt(16)
     r3.font.color.rgb = GRAY
 
-    # الصور
+    # ── الصور مع الحفاظ على النسب ──
     if images_b64:
         for i, b64 in enumerate(images_b64[:3]):
             slide = prs.slides.add_slide(prs.slide_layouts[6])
             add_bg(slide)
             add_title_box(slide, f"صورة {i + 1}", color=BLUE, font_size=24)
+
             bio = base64_to_bytesio(b64)
             if bio:
                 try:
-                    slide.shapes.add_picture(
-                        bio,
-                        Emu(int(W * 0.1)), Emu(1000000),
-                        Emu(int(W * 0.8)), Emu(int(H * 0.7)),
+                    # ✅ حساب الأبعاد تلقائياً مع الحفاظ على النسبة
+                    left, top, pic_w, pic_h = calc_image_size_pptx(
+                        b64, W, H,
+                        max_w_ratio=0.78,
+                        max_h_ratio=0.62,
                     )
+                    slide.shapes.add_picture(bio, left, top, pic_w, pic_h)
                 except Exception:
                     pass
 
@@ -786,10 +858,8 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
             fill = slide.background.fill
             fill.solid()
             fill.fore_color.rgb = PRGBColor(15, 10, 35)
-
             t = "📋 الملخص التنفيذي" if ci == 0 else f"📋 الملخص التنفيذي ({ci + 1})"
             add_title_box(slide, t, color=RED, font_size=30)
-
             try:
                 sep_box = slide.shapes.add_textbox(
                     Emu(300000), Emu(1020000), W - Emu(600000), Emu(60000)
@@ -802,7 +872,6 @@ def export_to_pptx(title, account_data=None, tweet_data=None,
                 sep_r.font.size = PPt(9)
             except Exception:
                 pass
-
             add_content_box(
                 slide, '\n'.join(chunk_lines),
                 top=Emu(1120000), font_size=15,
@@ -1271,7 +1340,6 @@ def tweet_tab(api_key, model_name):
             unsafe_allow_html=True,
         )
 
-    # ── الملخص التنفيذي ──
     if tweet_data and api_key:
         st.markdown("---")
         st.markdown("""
@@ -1291,7 +1359,6 @@ def tweet_tab(api_key, model_name):
             use_container_width=True,
         ):
             context_parts = []
-
             tweet_info = (
                 "بيانات التغريدة:\n"
                 f"- الكاتب: {tweet_data.get('author_name', '')} "
@@ -1303,19 +1370,14 @@ def tweet_tab(api_key, model_name):
                 f" | المشاهدات: {format_number(tweet_data.get('views', 0))}"
             )
             context_parts.append(tweet_info)
-
             if st.session_state.get('tweet_analysis'):
                 context_parts.append(
-                    "تحليل النص:\n"
-                    + st.session_state['tweet_analysis'][:1500]
+                    "تحليل النص:\n" + st.session_state['tweet_analysis'][:1500]
                 )
-
             if st.session_state.get('tweet_img_analysis'):
                 context_parts.append(
-                    "تحليل الصورة:\n"
-                    + st.session_state['tweet_img_analysis'][:1000]
+                    "تحليل الصورة:\n" + st.session_state['tweet_img_analysis'][:1000]
                 )
-
             sep = "\n---\n"
             exec_prompt = (
                 "أنت محلل استخباراتي كبير. بناءً على المعلومات التالية:\n\n"
@@ -1339,7 +1401,6 @@ def tweet_tab(api_key, model_name):
                 "اكتب الملخص باللغة العربية بأسلوب احترافي رسمي "
                 "مناسب للتقارير الاستخباراتية."
             )
-
             with st.spinner("⏳ جاري توليد الملخص التنفيذي..."):
                 exec_summary_text = gemini_text(exec_prompt, api_key, model_name)
                 st.session_state['exec_summary'] = exec_summary_text
@@ -1401,7 +1462,6 @@ def render_sidebar():
         st.markdown(
             "[🔗 احصل على مفتاح مجاني](https://aistudio.google.com/apikey)"
         )
-
         if api_key:
             st.success("✅ المفتاح مُدرج")
         else:
@@ -1434,7 +1494,6 @@ def render_sidebar():
                     'tweet_img_analysis', 'exec_summary',
                 ]
             })
-
         return api_key, model_name
 
 
@@ -1485,8 +1544,7 @@ def main():
     }
     h1, h2, h3 {
         color: #0078d4 !important;
-        direction: rtl;
-        text-align: right;
+        direction: rtl; text-align: right;
     }
     .stTabs [data-baseweb="tab"] {
         font-size: 16px; font-weight: 600; color: #eee;
