@@ -1,6 +1,6 @@
 # ============================================================
-# محلل حسابات X الاستخباراتي - v10.3.4
-# إصلاح: شاشة سوداء + RTL كامل + تصدير احترافي
+# محلل حسابات X الاستخباراتي - v10.3.5
+# إصلاح: الشاشة السوداء عبر config.toml + CSS مبسّط للـ RTL فقط
 # ============================================================
 
 import streamlit as st
@@ -27,19 +27,21 @@ except ImportError:
 
 try:
     from pptx import Presentation
-    from pptx.util import Inches as PInches, Pt as PPt, Emu
+    from pptx.util import Inches as PInches, Pt as PPt
     from pptx.dml.color import RGBColor as PRGBColor
     from pptx.enum.text import PP_ALIGN
-    from pptx.oxml.ns import qn as pqn
-    from pptx.oxml import parse_xml
     PPTX_OK = True
 except ImportError:
     PPTX_OK = False
 
-import google.generativeai as genai
+try:
+    import google.generativeai as genai
+    GENAI_OK = True
+except ImportError:
+    GENAI_OK = False
 
 # ─── ثوابت ───────────────────────────────────────────────────
-VERSION         = "v10.3.4"
+VERSION         = "v10.3.5"
 PAGE_TITLE      = "محلل حسابات X الاستخباراتي"
 PAGE_ICON       = "🔍"
 FXTWITTER_TWEET = "https://api.fxtwitter.com/status/{tweet_id}"
@@ -58,7 +60,6 @@ GEMINI_MODELS = {
     "gemini-2.0-flash (اقتصادي)":        "gemini-2.0-flash",
 }
 
-# كلمات مفتاحية للتحليل الاستخباراتي
 INTEL_KEYWORDS = {
     "العداء المباشر للسعودية": [
         "ارض الحرمين","المهلكة","ال سلول","شولوم","البقرة","الحلوب",
@@ -82,223 +83,91 @@ INTEL_KEYWORDS = {
 }
 
 IMAGE_ANALYSIS_POINTS = {
-    "📍 تحليل الموقع الجغرافي": "حدد الموقع الجغرافي والمعالم والدولة والمدينة المحتملة من الصورة.",
-    "👥 تحليل الأشخاص": "صف الأشخاص في الصورة: الجنس، العمر التقريبي، الملابس، الهوية المحتملة.",
-    "🚗 تحليل المركبات": "حدد أي مركبات تظهر في الصورة مع نوعها ولونها وأي معلومات مميزة.",
-    "📄 تحليل المستندات": "استخرج أي نصوص أو معلومات من مستندات أو لافتات أو كتابات في الصورة.",
-    "⚠️ تحليل التهديدات": "حدد أي محتوى مثير للقلق أو تهديدات أو محتوى عنيف في الصورة.",
-    "🏛️ تحليل البنية التحتية": "صف أي مبانٍ أو منشآت أو بنية تحتية مرئية في الصورة.",
-    "🕐 تحليل التوقيت": "قدّر الوقت من الإضاءة والظلال وأي مؤشرات زمنية في الصورة.",
-    "🎭 تحليل الأحداث": "صف أي حدث أو اجتماع أو نشاط يجري في الصورة.",
-    "🔍 كشف التزوير": "قيّم مدى أصالة الصورة وابحث عن علامات التحرير أو التلاعب.",
-    "📊 تحليل شامل": "قدم تحليلاً شاملاً كاملاً لجميع جوانب الصورة من منظور استخباراتي.",
+    "📍 تحليل الموقع الجغرافي":  "حدد الموقع الجغرافي والمعالم والدولة والمدينة المحتملة.",
+    "👥 تحليل الأشخاص":          "صف الأشخاص في الصورة: الجنس، العمر، الملابس، الهوية.",
+    "🚗 تحليل المركبات":          "حدد أي مركبات مع نوعها ولونها وأي معلومات مميزة.",
+    "📄 تحليل المستندات":         "استخرج أي نصوص أو معلومات من مستندات أو لافتات.",
+    "⚠️ تحليل التهديدات":         "حدد أي محتوى مثير للقلق أو تهديدات أو محتوى عنيف.",
+    "🏛️ تحليل البنية التحتية":    "صف أي مبانٍ أو منشآت أو بنية تحتية مرئية.",
+    "🕐 تحليل التوقيت":           "قدّر الوقت من الإضاءة والظلال.",
+    "🎭 تحليل الأحداث":           "صف أي حدث أو اجتماع أو نشاط يجري.",
+    "🔍 كشف التزوير":             "قيّم مدى أصالة الصورة وابحث عن علامات التلاعب.",
+    "📊 تحليل شامل":              "قدم تحليلاً شاملاً من منظور استخباراتي.",
 }
 
-# ─── CSS مُصلح (يحل مشكلة الشاشة السوداء) ──────────────────
-FIXED_CSS = """
+# ─── CSS للـ RTL فقط (بدون ألوان - الألوان من config.toml) ──
+RTL_CSS = """
 <style>
-/* ========= إصلاح الشاشة السوداء - إجبار الألوان ========= */
-html, body {
-    background-color: #0d1117 !important;
-    color: #c9d1d9 !important;
-}
-
-.stApp {
-    background-color: #0d1117 !important;
-    color: #c9d1d9 !important;
+/* RTL فقط */
+.stApp, html, body {
     direction: rtl !important;
-    font-family: 'Segoe UI', 'Arial', sans-serif !important;
 }
-
-/* إصلاح الحاوية الرئيسية */
 .main .block-container {
-    background-color: #0d1117 !important;
-    color: #c9d1d9 !important;
-    padding-top: 2rem !important;
+    direction: rtl !important;
     max-width: 1100px !important;
 }
-
-/* إصلاح جميع النصوص */
-p, span, label, div, h1, h2, h3, h4, h5, h6,
-.stMarkdown, .stMarkdown p, .stMarkdown span,
-[data-testid="stMarkdownContainer"],
+p, span, div, h1, h2, h3, h4, h5, h6,
+.stMarkdown, [data-testid="stMarkdownContainer"],
 [data-testid="stMarkdownContainer"] p {
-    color: #c9d1d9 !important;
     direction: rtl !important;
     text-align: right !important;
-}
-
-/* ========= الشريط الجانبي ========= */
-[data-testid="stSidebar"] {
-    background-color: #161b22 !important;
-    direction: rtl !important;
 }
 [data-testid="stSidebar"] * {
-    color: #c9d1d9 !important;
     direction: rtl !important;
     text-align: right !important;
 }
-
-/* ========= حقول الإدخال ========= */
 .stTextInput > div > div > input,
-.stTextArea > div > div > textarea,
-.stTextInput input,
-.stTextArea textarea {
-    background-color: #21262d !important;
-    color: #c9d1d9 !important;
-    border: 1px solid #30363d !important;
-    border-radius: 8px !important;
+.stTextArea > div > div > textarea {
     direction: rtl !important;
     text-align: right !important;
-    font-size: 14px !important;
 }
-
-.stTextInput > div > div > input:focus,
-.stTextArea > div > div > textarea:focus {
-    border-color: #58a6ff !important;
-    box-shadow: 0 0 0 3px rgba(88,166,255,0.2) !important;
-}
-
-/* ========= Labels ========= */
-.stTextInput label,
-.stTextArea label,
+.stTextInput label, .stTextArea label,
 .stSelectbox label,
 label[data-testid="stWidgetLabel"] {
-    color: #8b949e !important;
     direction: rtl !important;
     text-align: right !important;
-    font-size: 13px !important;
     display: block !important;
     width: 100% !important;
 }
-
-/* ========= الأزرار ========= */
-.stButton > button {
-    background: linear-gradient(135deg, #1f6feb, #388bfd) !important;
-    color: #ffffff !important;
-    border: none !important;
-    border-radius: 8px !important;
-    padding: 0.5rem 1.5rem !important;
-    font-size: 14px !important;
-    font-weight: 600 !important;
-    transition: all 0.2s ease !important;
-    direction: rtl !important;
-    width: 100% !important;
-}
-.stButton > button:hover {
-    background: linear-gradient(135deg, #388bfd, #58a6ff) !important;
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 15px rgba(31,111,235,0.4) !important;
-}
-
-/* ========= التبويبات ========= */
-.stTabs [data-baseweb="tab-list"] {
-    background-color: #161b22 !important;
-    border-radius: 10px !important;
-    gap: 4px !important;
-    direction: rtl !important;
-    border-bottom: 2px solid #30363d !important;
-}
-.stTabs [data-baseweb="tab"] {
-    background-color: transparent !important;
-    color: #8b949e !important;
-    border-radius: 8px !important;
-    font-size: 14px !important;
-    padding: 0.5rem 1.2rem !important;
-    border: none !important;
-}
-.stTabs [aria-selected="true"] {
-    background-color: #1f6feb !important;
-    color: #ffffff !important;
-}
-
-/* ========= القائمة المنسدلة ========= */
-.stSelectbox > div > div {
-    background-color: #21262d !important;
-    color: #c9d1d9 !important;
-    border: 1px solid #30363d !important;
-    border-radius: 8px !important;
-    direction: rtl !important;
-}
-.stSelectbox > div > div > div {
-    color: #c9d1d9 !important;
-}
-
-/* ========= رسائل التنبيه ========= */
-.stAlert, .stSuccess, .stError, .stWarning, .stInfo,
+.stAlert, .stSuccess, .stError,
+.stWarning, .stInfo,
 [data-testid="stAlert"] {
     direction: rtl !important;
     text-align: right !important;
-    border-radius: 8px !important;
 }
-.stAlert p, .stSuccess p, .stError p, .stWarning p, .stInfo p {
-    color: inherit !important;
+.stAlert p, .stSuccess p, .stError p,
+.stWarning p, .stInfo p {
+    direction: rtl !important;
+    text-align: right !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+    direction: rtl !important;
+}
+.stButton > button {
+    width: 100% !important;
+    border-radius: 8px !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+}
+.streamlit-expanderHeader {
     direction: rtl !important;
     text-align: right !important;
 }
 
-/* ========= الفاصل ========= */
-hr {
-    border-color: #30363d !important;
-}
-
-/* ========= بطاقات مخصصة ========= */
+/* بطاقات مخصصة */
 .intel-card {
-    background: #161b22;
-    border: 1px solid #30363d;
+    border: 1px solid rgba(255,255,255,0.1);
     border-radius: 12px;
     padding: 1.2rem;
     margin: 0.8rem 0;
     direction: rtl;
     text-align: right;
-}
-.intel-card h3, .intel-card h4 {
-    color: #58a6ff !important;
-    margin-bottom: 0.5rem;
-}
-.intel-card p, .intel-card span, .intel-card li {
-    color: #c9d1d9 !important;
+    background: rgba(255,255,255,0.03);
 }
 
-/* ========= الميزان ========= */
-.threat-badge {
-    display: inline-block;
-    padding: 0.3rem 1rem;
-    border-radius: 20px;
-    font-weight: bold;
-    font-size: 14px;
-    margin: 0.5rem 0;
-}
-
-/* ========= Expander ========= */
-.streamlit-expanderHeader {
-    background-color: #161b22 !important;
-    color: #c9d1d9 !important;
-    direction: rtl !important;
-    text-align: right !important;
-    border: 1px solid #30363d !important;
-    border-radius: 8px !important;
-}
-.streamlit-expanderContent {
-    background-color: #0d1117 !important;
-    border: 1px solid #30363d !important;
-    direction: rtl !important;
-}
-
-/* ========= تمرير ========= */
+/* شريط تمرير */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #0d1117; }
-::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #58a6ff; }
-
-/* ========= إصلاح download button ========= */
-.stDownloadButton > button {
-    background: linear-gradient(135deg, #238636, #2ea043) !important;
-    color: #ffffff !important;
-    border: none !important;
-    border-radius: 8px !important;
-    direction: rtl !important;
-}
+::-webkit-scrollbar-thumb { border-radius: 3px; }
 </style>
 """
 
@@ -328,11 +197,13 @@ def extract_tweet_id(url):
 
 def extract_username(text):
     text = text.strip().lstrip('@')
-    for pat in [r'(?:twitter\.com|x\.com)/([^/?#\s]+)', r'^([A-Za-z0-9_]{1,50})$']:
+    for pat in [r'(?:twitter\.com|x\.com)/([^/?#\s]+)',
+                r'^([A-Za-z0-9_]{1,50})$']:
         m = re.search(pat, text)
         if m:
             u = m.group(1)
-            if u.lower() not in ('home','explore','notifications','messages','i','settings'):
+            if u.lower() not in ('home','explore','notifications',
+                                  'messages','i','settings'):
                 return u
     return None
 
@@ -345,7 +216,7 @@ def image_to_base64(img: Image.Image, fmt="JPEG") -> str:
 def base64_to_bytesio(b64: str) -> io.BytesIO:
     return io.BytesIO(base64.b64decode(b64))
 
-def download_image_b64(url: str) -> str | None:
+def download_image_b64(url: str):
     try:
         h = {"User-Agent": random.choice(USER_AGENTS)}
         r = requests.get(url, headers=h, timeout=15)
@@ -355,64 +226,57 @@ def download_image_b64(url: str) -> str | None:
     except: pass
     return None
 
-def calc_image_size_word(b64, max_w_cm=15.0, max_h_cm=12.0):
+def calc_image_size_word(b64, max_w=15.0, max_h=12.0):
     try:
         img = Image.open(base64_to_bytesio(b64))
         w, h = img.size
         ratio = w / h
-        if w > h:
-            nw = min(max_w_cm, max_w_cm)
-            nh = nw / ratio
-        else:
-            nh = min(max_h_cm, max_h_cm)
-            nw = nh * ratio
-        if nw > max_w_cm: nw = max_w_cm; nh = nw / ratio
-        if nh > max_h_cm: nh = max_h_cm; nw = nh * ratio
+        nw = min(max_w, max_h * ratio)
+        nh = nw / ratio
+        if nh > max_h: nh = max_h; nw = nh * ratio
         return Cm(nw), Cm(nh)
     except:
         return Cm(10), Cm(8)
 
-def calc_image_size_pptx(b64, slide_w=9144000, slide_h=5143500, margin=457200):
+def calc_image_size_pptx(b64, sw=9144000, sh=5143500, mg=457200):
     try:
         img = Image.open(base64_to_bytesio(b64))
         w, h = img.size
-        max_w = slide_w - margin * 2
-        max_h = slide_h - margin * 4
-        scale = min(max_w / w, max_h / h)
-        return int(w * scale), int(h * scale)
+        sc = min((sw-mg*2)/w, (sh-mg*4)/h)
+        return int(w*sc), int(h*sc)
     except:
-        return int(slide_w * 0.7), int(slide_h * 0.6)
+        return int(sw*0.7), int(sh*0.6)
 
-# ─── جلب البيانات ─────────────────────────────────────────────
-def fetch_fxtwitter_tweet(tweet_id: str) -> dict | None:
+# ─── API calls ────────────────────────────────────────────────
+def fetch_fxtwitter_tweet(tweet_id: str):
     try:
-        url = FXTWITTER_TWEET.format(tweet_id=tweet_id)
-        h   = {"User-Agent": random.choice(USER_AGENTS), "Accept": "application/json"}
-        r   = requests.get(url, headers=h, timeout=15)
+        r = requests.get(FXTWITTER_TWEET.format(tweet_id=tweet_id),
+                         headers={"User-Agent": random.choice(USER_AGENTS)},
+                         timeout=15)
         if r.status_code == 200:
             d = r.json()
             if d.get("code") == 200:
                 return d.get("tweet") or d.get("status")
     except Exception as e:
-        st.error(f"خطأ في جلب التغريدة: {e}")
+        st.error(f"خطأ: {e}")
     return None
 
-def fetch_fxtwitter_user(username: str) -> dict | None:
+def fetch_fxtwitter_user(username: str):
     try:
-        url = FXTWITTER_USER.format(username=username)
-        h   = {"User-Agent": random.choice(USER_AGENTS), "Accept": "application/json"}
-        r   = requests.get(url, headers=h, timeout=15)
+        r = requests.get(FXTWITTER_USER.format(username=username),
+                         headers={"User-Agent": random.choice(USER_AGENTS)},
+                         timeout=15)
         if r.status_code == 200:
             d = r.json()
             if d.get("code") == 200:
                 return d.get("user")
     except Exception as e:
-        st.error(f"خطأ في جلب بيانات الحساب: {e}")
+        st.error(f"خطأ: {e}")
     return None
 
-def fetch_user_tweets_twitterapi(username: str, api_key: str, limit: int = 500) -> list:
+def fetch_user_tweets_twitterapi(username: str, api_key: str, limit=500):
     tweets, cursor = [], None
-    headers = {"X-API-Key": api_key, "Accept": "application/json"}
+    headers = {"X-API-Key": api_key}
     while len(tweets) < limit:
         params = {"userName": username, "limit": 20}
         if cursor: params["cursor"] = cursor
@@ -432,82 +296,67 @@ def fetch_user_tweets_twitterapi(username: str, api_key: str, limit: int = 500) 
 
 def scan_keywords(texts: list) -> dict:
     combined = " ".join(texts).lower()
-    found = {}
-    for cat, kws in INTEL_KEYWORDS.items():
-        hits = [k for k in kws if k.lower() in combined]
-        if hits: found[cat] = hits
-    return found
+    return {cat: [k for k in kws if k.lower() in combined]
+            for cat, kws in INTEL_KEYWORDS.items()
+            if any(k.lower() in combined for k in kws)}
 
-def get_threat_level(score: int) -> tuple:
-    if score >= 8: return "🔴 خطر عالٍ جداً", "#ff4444", "red"
-    if score >= 6: return "🟠 خطر عالٍ",       "#ff8800", "orange"
-    if score >= 4: return "🟡 خطر متوسط",     "#ffcc00", "yellow"
-    if score >= 2: return "🟢 خطر منخفض",     "#44bb44", "green"
-    return "⚪ لا يوجد خطر",                   "#888888", "gray"
+def get_threat_info(score: int):
+    if score >= 8: return "🔴 خطر عالٍ جداً",  "#ff4444"
+    if score >= 6: return "🟠 خطر عالٍ",        "#ff8800"
+    if score >= 4: return "🟡 خطر متوسط",       "#ffcc00"
+    if score >= 2: return "🟢 خطر منخفض",       "#44bb44"
+    return "⚪ لا يوجد خطر",                     "#888888"
 
 # ─── Gemini ───────────────────────────────────────────────────
 def gemini_text(prompt: str, model_id: str) -> str:
+    if not GENAI_OK:
+        return "مكتبة google-generativeai غير مثبتة"
     try:
-        m  = genai.GenerativeModel(model_id)
-        r  = m.generate_content(prompt)
-        return r.text
+        m = genai.GenerativeModel(model_id)
+        return m.generate_content(prompt).text
     except Exception as e:
         return f"خطأ في التحليل: {e}"
 
 def gemini_with_images(prompt: str, images_b64: list, model_id: str) -> str:
+    if not GENAI_OK:
+        return "مكتبة google-generativeai غير مثبتة"
     try:
-        m    = genai.GenerativeModel(model_id)
-        parts = [prompt]
-        for b64 in images_b64:
-            data = base64.b64decode(b64)
-            parts.append({"mime_type": "image/jpeg", "data": data})
-        r = m.generate_content(parts)
-        return r.text
+        m = genai.GenerativeModel(model_id)
+        parts = [prompt] + [{"mime_type":"image/jpeg",
+                              "data": base64.b64decode(b)} for b in images_b64]
+        return m.generate_content(parts).text
     except Exception as e:
         return f"خطأ في تحليل الصورة: {e}"
 
-def generate_intel_summary(user_data: dict, tweets: list, keyword_hits: dict, model_id: str) -> str:
-    bio   = safe_text(user_data.get("description",""))
-    name  = safe_text(user_data.get("name",""))
-    sname = safe_text(user_data.get("screen_name",""))
-    loc   = safe_text(user_data.get("location",""))
-    foll  = format_number(user_data.get("followers","0"))
-    
-    tweets_sample = "\n".join([
-        t.get("text","") if isinstance(t, dict) else str(t)
+def generate_intel_summary(user_data, tweets, keyword_hits, model_id) -> str:
+    bio    = safe_text(user_data.get("description",""), "")
+    name   = safe_text(user_data.get("name",""))
+    sname  = safe_text(user_data.get("screen_name",""))
+    loc    = safe_text(user_data.get("location",""), "")
+    foll   = format_number(user_data.get("followers", 0))
+    sample = "\n".join([
+        (t.get("text","") if isinstance(t,dict) else str(t))
         for t in tweets[:100]
     ])
-    
-    kw_text = ""
-    for cat, hits in keyword_hits.items():
-        kw_text += f"- {cat}: {', '.join(hits)}\n"
-    
-    prompt = f"""
-أنت محلل استخباراتي متخصص في تحليل حسابات وسائل التواصل الاجتماعي.
-قم بتحليل الحساب التالي وتقديم تقرير استخباراتي شامل باللغة العربية.
+    kw_txt = "\n".join(f"- {c}: {', '.join(h)}"
+                       for c, h in keyword_hits.items()) or "لا توجد"
+    prompt = f"""أنت محلل استخباراتي متخصص. قدم تقريراً باللغة العربية عن:
 
-## بيانات الحساب:
-- الاسم: {name} (@{sname})
-- الموقع: {loc}
-- عدد المتابعين: {foll}
-- السيرة الذاتية: {bio}
+**الحساب:** {name} (@{sname}) | الموقع: {loc} | المتابعون: {foll}
+**السيرة:** {bio}
 
-## الكلمات المفتاحية المكتشفة:
-{kw_text if kw_text else "لم تُكتشف كلمات مفتاحية مثيرة للقلق"}
+**الكلمات المفتاحية المكتشفة:**
+{kw_txt}
 
-## نماذج من التغريدات (أول 100):
-{tweets_sample[:3000] if tweets_sample else "لا توجد تغريدات متاحة"}
+**نماذج من التغريدات:**
+{sample[:3000]}
 
-## المطلوب:
-1. **مستوى التهديد** (1-10): حدد رقماً من 1 إلى 10
-2. **التصنيف**: (معادٍ للسعودية / متطرف / محرض / عادي)
-3. **الكلمات المكتشفة**: عدد ونوع الكلمات المثيرة للقلق
-4. **نمط السلوك**: وصف نمط التغريدات والأسلوب
-5. **المحتوى المثير للقلق**: أبرز المحتوى المشكوك فيه
-6. **التوصيات**: توصيات استخباراتية للتعامل مع هذا الحساب
-
-قدم التقرير بتنسيق منظم مع عناوين واضحة.
-"""
+**المطلوب (منسق بعناوين واضحة):**
+1. مستوى التهديد (1-10 مع تبرير)
+2. التصنيف (معادٍ للسعودية / متطرف / محرض / عادي)
+3. أبرز الكلمات والمحتوى المثير للقلق
+4. نمط السلوك والأسلوب
+5. التوصيات الاستخباراتية"""
     return gemini_text(prompt, model_id)
 
 # ─── تصدير Word ───────────────────────────────────────────────
@@ -522,348 +371,303 @@ def _set_rtl_para(para):
         pPr.append(jc)
     except: pass
 
-def export_to_word(user_data: dict, tweets: list, intel_report: str,
-                   exec_summary: str, images_data: list, text_analysis: str) -> bytes:
-    if not DOCX_OK:
-        return b""
+def export_to_word(user_data, tweets, intel_report,
+                   exec_summary, images_data, text_analysis) -> bytes:
+    if not DOCX_OK: return b""
     doc = Document()
-    # إعداد الصفحة
-    section = doc.sections[0]
-    section.page_width  = Cm(21)
-    section.page_height = Cm(29.7)
-    section.left_margin = section.right_margin = Cm(2.5)
+    sec = doc.sections[0]
+    sec.left_margin = sec.right_margin = Cm(2.5)
 
-    def add_rtl_heading(text, level=1):
-        h = doc.add_heading(text, level=level)
-        h.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        _set_rtl_para(h)
-        for run in h.runs:
-            run.font.color.rgb = RGBColor(0x1F, 0x6F, 0xEB)
+    def h(txt, lv=1):
+        p = doc.add_heading(txt, level=lv)
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        _set_rtl_para(p)
 
-    def add_rtl_para(text, bold=False, color=None):
+    def para(txt, bold=False):
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         _set_rtl_para(p)
-        run = p.add_run(text)
+        run = p.add_run(txt)
         run.font.size = Pt(12)
         if bold: run.font.bold = True
-        if color: run.font.color.rgb = RGBColor(*color)
-        return p
 
     # غلاف
-    title_p = doc.add_paragraph()
-    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title_p.add_run("تقرير استخباراتي - محلل حسابات X")
-    run.font.size = Pt(22); run.font.bold = True
-    run.font.color.rgb = RGBColor(0x1F, 0x6F, 0xEB)
+    tp = doc.add_paragraph()
+    tp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = tp.add_run("تقرير استخباراتي — محلل حسابات X")
+    r.font.size = Pt(22); r.font.bold = True
     doc.add_paragraph(f"التاريخ: {datetime.now().strftime('%Y/%m/%d')} | {VERSION}").alignment = WD_ALIGN_PARAGRAPH.CENTER
-
     doc.add_paragraph()
 
-    # بيانات الحساب
     if user_data:
-        add_rtl_heading("📋 بيانات الحساب", 1)
-        fields = [
-            ("الاسم",          user_data.get("name","")),
-            ("المعرف",         f"@{user_data.get('screen_name','')}"),
-            ("الموقع",         user_data.get("location","")),
-            ("السيرة الذاتية", user_data.get("description","")),
-            ("المتابعون",      format_number(user_data.get("followers",0))),
-            ("يتابع",          format_number(user_data.get("following",0))),
-            ("التغريدات",      format_number(user_data.get("tweets",0))),
-            ("الإعجابات",      format_number(user_data.get("likes",0))),
-            ("تاريخ الانضمام", format_date(user_data.get("created",""))),
-        ]
-        for label, val in fields:
-            if val and val != "غير متوفر":
-                add_rtl_para(f"{label}: {val}")
+        h("📋 بيانات الحساب", 1)
+        for lbl, key in [("الاسم","name"),("المعرف","screen_name"),
+                          ("الموقع","location"),("السيرة الذاتية","description"),
+                          ("المتابعون","followers"),("يتابع","following"),
+                          ("التغريدات","tweets"),("الإعجابات","likes")]:
+            v = user_data.get(key,"")
+            if v: para(f"{lbl}: {v if key not in ('followers','following','tweets','likes') else format_number(v)}")
+        if user_data.get("created"):
+            para(f"تاريخ الانضمام: {format_date(user_data['created'])}")
 
-    doc.add_paragraph()
-
-    # التقرير الاستخباراتي
     if intel_report:
-        add_rtl_heading("🔍 التقرير الاستخباراتي", 1)
-        for line in intel_report.split('\n'):
-            add_rtl_para(line)
+        doc.add_paragraph()
+        h("🔍 التقرير الاستخباراتي", 1)
+        for line in intel_report.split('\n'): para(line)
 
-    doc.add_paragraph()
-
-    # الملخص التنفيذي
     if exec_summary:
-        add_rtl_heading("📊 الملخص التنفيذي", 1)
-        for line in exec_summary.split('\n'):
-            add_rtl_para(line)
+        doc.add_paragraph()
+        h("📊 الملخص التنفيذي", 1)
+        for line in exec_summary.split('\n'): para(line)
 
-    # الصور والتحليلات
-    for i, img_info in enumerate(images_data or []):
+    for i, img in enumerate(images_data or []):
         doc.add_page_break()
-        add_rtl_heading(f"🖼️ الصورة {i+1} - {img_info.get('label','')}", 2)
-        if img_info.get("b64"):
+        h(f"🖼️ الصورة {i+1} — {img.get('label','')}", 2)
+        if img.get("b64"):
             try:
-                w_cm, h_cm = calc_image_size_word(img_info["b64"])
-                doc.add_picture(base64_to_bytesio(img_info["b64"]), width=w_cm, height=h_cm)
+                wc, hc = calc_image_size_word(img["b64"])
+                doc.add_picture(base64_to_bytesio(img["b64"]), width=wc, height=hc)
             except: pass
-        if img_info.get("analysis"):
-            add_rtl_heading("نتيجة التحليل:", 3)
-            for line in img_info["analysis"].split('\n'):
-                add_rtl_para(line)
+        if img.get("analysis"):
+            h("نتيجة التحليل:", 3)
+            for line in img["analysis"].split('\n'): para(line)
 
-    # تحليل النص
     if text_analysis:
         doc.add_page_break()
-        add_rtl_heading("📝 تحليل النص", 1)
-        for line in text_analysis.split('\n'):
-            add_rtl_para(line)
+        h("📝 تحليل النص", 1)
+        for line in text_analysis.split('\n'): para(line)
 
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
 
 # ─── تصدير PowerPoint ─────────────────────────────────────────
-def _set_rtl_pptx(tf):
-    try:
-        from lxml import etree
-        for para in tf.text_frame.paragraphs:
-            pPr = para._p.get_or_add_pPr()
-            pPr.set('algn', 'r')
-            pPr.set('rtl', '1')
-    except: pass
-
-def _add_pptx_slide(prs, layout_idx=6):
-    layout = prs.slide_layouts[min(layout_idx, len(prs.slide_layouts)-1)]
-    return prs.slides.add_slide(layout)
-
-def _pptx_textbox(slide, left, top, width, height,
-                  text, font_size=18, bold=False,
-                  color=(201,209,217), bg=None, align=PP_ALIGN.RIGHT):
-    txBox = slide.shapes.add_textbox(left, top, width, height)
-    tf    = txBox.text_frame
-    tf.word_wrap = True
-    if bg:
-        fill = txBox.fill
-        fill.solid()
-        fill.fore_color.rgb = PRGBColor(*bg)
-    para = tf.paragraphs[0]
-    para.alignment = align
-    run  = para.add_run()
-    run.text = text
-    run.font.size  = PPt(font_size)
-    run.font.bold  = bold
-    run.font.color.rgb = PRGBColor(*color)
-    try:
-        pPr = para._p.get_or_add_pPr()
-        pPr.set('rtl','1'); pPr.set('algn','r')
-    except: pass
-    return txBox
-
-def export_to_pptx(user_data: dict, tweets: list, intel_report: str,
-                   exec_summary: str, images_data: list, text_analysis: str) -> bytes:
-    if not PPTX_OK:
-        return b""
+def export_to_pptx(user_data, tweets, intel_report,
+                   exec_summary, images_data, text_analysis) -> bytes:
+    if not PPTX_OK: return b""
 
     prs = Presentation()
     prs.slide_width  = PInches(13.33)
     prs.slide_height = PInches(7.5)
-
     W = int(prs.slide_width)
     H = int(prs.slide_height)
     M = int(PInches(0.5))
 
-    C_BG    = (13, 17, 23)       # خلفية داكنة
-    C_CARD  = (22, 27, 34)       # بطاقة
-    C_BLUE  = (31, 111, 235)     # أزرق رئيسي
-    C_TEXT  = (201, 209, 217)    # نص فاتح
-    C_DIM   = (139, 148, 158)    # نص خافت
-    C_RED   = (248, 81, 73)      # أحمر تهديد
-    C_GREEN = (63, 185, 80)      # أخضر
+    BG   = (13, 17, 23)
+    CARD = (22, 27, 34)
+    BLUE = (31, 111, 235)
+    TEXT = (201, 209, 217)
+    DIM  = (139, 148, 158)
+    RED  = (248, 81, 73)
 
-    def bg_slide(slide, color=C_BG):
-        bg = slide.shapes.add_shape(1, 0, 0, W, H)
-        bg.fill.solid(); bg.fill.fore_color.rgb = PRGBColor(*color)
+    def blank_slide():
+        sl = prs.slides.add_slide(
+            prs.slide_layouts[min(6, len(prs.slide_layouts)-1)])
+        bg = sl.shapes.add_shape(1, 0, 0, W, H)
+        bg.fill.solid()
+        bg.fill.fore_color.rgb = PRGBColor(*BG)
         bg.line.fill.background()
+        return sl
 
-    def add_slide_title(slide, title, subtitle=""):
-        bg_slide(slide)
-        # شريط عنوان
-        bar = slide.shapes.add_shape(1, 0, 0, W, int(PInches(1)))
-        bar.fill.solid(); bar.fill.fore_color.rgb = PRGBColor(*C_BLUE)
+    def title_bar(sl, title, subtitle=""):
+        bar = sl.shapes.add_shape(1, 0, 0, W, int(PInches(1)))
+        bar.fill.solid(); bar.fill.fore_color.rgb = PRGBColor(*BLUE)
         bar.line.fill.background()
-        _pptx_textbox(slide, M, int(PInches(0.1)), W - 2*M, int(PInches(0.8)),
-                      title, font_size=28, bold=True, color=(255,255,255), align=PP_ALIGN.RIGHT)
+        tb = sl.shapes.add_textbox(M, int(PInches(0.1)), W-2*M, int(PInches(0.8)))
+        tf = tb.text_frame; tf.word_wrap = True
+        p = tf.paragraphs[0]; p.alignment = PP_ALIGN.RIGHT
+        run = p.add_run(); run.text = title
+        run.font.size = PPt(26); run.font.bold = True
+        run.font.color.rgb = PRGBColor(255,255,255)
+        try: p._p.get_or_add_pPr().set('rtl','1')
+        except: pass
         if subtitle:
-            _pptx_textbox(slide, M, int(PInches(1.1)), W - 2*M, int(PInches(0.5)),
-                          subtitle, font_size=14, color=C_DIM, align=PP_ALIGN.RIGHT)
+            tb2 = sl.shapes.add_textbox(M, int(PInches(1.05)), W-2*M, int(PInches(0.4)))
+            tf2 = tb2.text_frame
+            p2 = tf2.paragraphs[0]; p2.alignment = PP_ALIGN.RIGHT
+            r2 = p2.add_run(); r2.text = subtitle
+            r2.font.size = PPt(13); r2.font.color.rgb = PRGBColor(*DIM)
+            try: p2._p.get_or_add_pPr().set('rtl','1')
+            except: pass
 
-    # ── شريحة 1: الغلاف ──────────────────────────────────────
-    s1 = _add_pptx_slide(prs)
-    bg_slide(s1)
-    # بطاقة وسط
-    card_x = int(PInches(1.5)); card_y = int(PInches(1.5))
-    card_w = int(PInches(10.3)); card_h = int(PInches(4.5))
-    card = s1.shapes.add_shape(1, card_x, card_y, card_w, card_h)
-    card.fill.solid(); card.fill.fore_color.rgb = PRGBColor(*C_CARD)
-    card.line.color.rgb = PRGBColor(*C_BLUE); card.line.width = int(PPt(1.5))
+    def add_text_box(sl, txt, l, t, w, h, fs=13,
+                     bold=False, color=TEXT, center=False):
+        tb = sl.shapes.add_textbox(l, t, w, h)
+        tf = tb.text_frame; tf.word_wrap = True
+        align = PP_ALIGN.CENTER if center else PP_ALIGN.RIGHT
+        for i, line in enumerate(str(txt).split('\n')[:40]):
+            p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+            p.alignment = align
+            run = p.add_run(); run.text = line
+            run.font.size = PPt(fs); run.font.bold = bold
+            run.font.color.rgb = PRGBColor(*color)
+            try: p._p.get_or_add_pPr().set('rtl','1')
+            except: pass
 
-    _pptx_textbox(s1, card_x+M, card_y+int(PInches(0.3)), card_w-2*M, int(PInches(1.2)),
-                  "🔍 تقرير استخباراتي", font_size=34, bold=True,
-                  color=(255,255,255), align=PP_ALIGN.CENTER)
-    _pptx_textbox(s1, card_x+M, card_y+int(PInches(1.5)), card_w-2*M, int(PInches(0.8)),
-                  "محلل حسابات X الاستخباراتي", font_size=20,
-                  color=C_DIM, align=PP_ALIGN.CENTER)
-    _pptx_textbox(s1, card_x+M, card_y+int(PInches(2.3)), card_w-2*M, int(PInches(0.6)),
-                  f"التاريخ: {datetime.now().strftime('%Y/%m/%d')}  |  {VERSION}",
-                  font_size=14, color=C_DIM, align=PP_ALIGN.CENTER)
+    # شريحة 1: غلاف
+    s1 = blank_slide()
+    cx = int(PInches(1.5)); cy = int(PInches(1.5))
+    cw = int(PInches(10.3)); ch = int(PInches(4.5))
+    card = s1.shapes.add_shape(1, cx, cy, cw, ch)
+    card.fill.solid(); card.fill.fore_color.rgb = PRGBColor(*CARD)
+    card.line.color.rgb = PRGBColor(*BLUE); card.line.width = int(PPt(1.5))
+    add_text_box(s1, "🔍 تقرير استخباراتي",
+                 cx+M, cy+int(PInches(0.4)), cw-2*M, int(PInches(1.2)),
+                 fs=32, bold=True, color=(255,255,255), center=True)
+    add_text_box(s1, "محلل حسابات X الاستخباراتي",
+                 cx+M, cy+int(PInches(1.6)), cw-2*M, int(PInches(0.7)),
+                 fs=18, color=DIM, center=True)
+    add_text_box(s1, f"التاريخ: {datetime.now().strftime('%Y/%m/%d')}  |  {VERSION}",
+                 cx+M, cy+int(PInches(2.3)), cw-2*M, int(PInches(0.5)),
+                 fs=13, color=DIM, center=True)
     # شارة سري
-    badge = s1.shapes.add_shape(1, int(PInches(5.8)), card_y+int(PInches(3.3)),
-                                 int(PInches(1.7)), int(PInches(0.5)))
-    badge.fill.solid(); badge.fill.fore_color.rgb = PRGBColor(*C_RED)
+    badge = s1.shapes.add_shape(1,
+                                  int(PInches(5.7)), cy+int(PInches(3.3)),
+                                  int(PInches(1.9)), int(PInches(0.5)))
+    badge.fill.solid(); badge.fill.fore_color.rgb = PRGBColor(*RED)
     badge.line.fill.background()
-    _pptx_textbox(s1, int(PInches(5.8)), card_y+int(PInches(3.3)),
-                  int(PInches(1.7)), int(PInches(0.5)),
-                  "🔒 سري", font_size=13, bold=True,
-                  color=(255,255,255), align=PP_ALIGN.CENTER)
+    add_text_box(s1, "🔒 سري للغاية",
+                 int(PInches(5.7)), cy+int(PInches(3.3)),
+                 int(PInches(1.9)), int(PInches(0.5)),
+                 fs=12, bold=True, color=(255,255,255), center=True)
 
-    # ── شريحة 2: ملف الحساب ──────────────────────────────────
-    s2 = _add_pptx_slide(prs)
-    add_slide_title(s2, "📋 ملف الحساب",
-                    f"@{safe_text(user_data.get('screen_name',''))} | {safe_text(user_data.get('name',''))}" if user_data else "")
-
+    # شريحة 2: ملف الحساب
+    s2 = blank_slide()
+    uname = f"@{safe_text(user_data.get('screen_name',''))}" if user_data else ""
+    title_bar(s2, "📋 ملف الحساب", uname)
     if user_data:
         stats = [
             ("👥 المتابعون", format_number(user_data.get("followers",0))),
-            ("➡️ يتابع",    format_number(user_data.get("following",0))),
+            ("➡️ يتابع",     format_number(user_data.get("following",0))),
             ("📝 التغريدات", format_number(user_data.get("tweets",0))),
             ("❤️ الإعجابات", format_number(user_data.get("likes",0))),
         ]
-        box_w = int(PInches(2.5)); box_h = int(PInches(1.0))
-        gap   = int(PInches(0.3))
-        for i, (lbl, val) in enumerate(stats):
-            bx = int(PInches(0.5)) + i * (box_w + gap)
+        bw = int(PInches(2.8)); bh = int(PInches(1.1)); gap = int(PInches(0.2))
+        for i,(lbl,val) in enumerate(stats):
+            bx = int(PInches(0.5)) + i*(bw+gap)
             by = int(PInches(1.7))
-            box = s2.shapes.add_shape(1, bx, by, box_w, box_h)
-            box.fill.solid(); box.fill.fore_color.rgb = PRGBColor(*C_CARD)
-            box.line.color.rgb = PRGBColor(*C_BLUE); box.line.width = int(PPt(0.75))
-            _pptx_textbox(s2, bx, by+int(PPt(2)), box_w, int(PPt(20)),
-                          val, font_size=20, bold=True,
-                          color=(88,166,255), align=PP_ALIGN.CENTER)
-            _pptx_textbox(s2, bx, by+int(PInches(0.55)), box_w, int(PPt(18)),
-                          lbl, font_size=12, color=C_DIM, align=PP_ALIGN.CENTER)
+            bx_s = s2.shapes.add_shape(1, bx, by, bw, bh)
+            bx_s.fill.solid(); bx_s.fill.fore_color.rgb = PRGBColor(*CARD)
+            bx_s.line.color.rgb = PRGBColor(*BLUE); bx_s.line.width = int(PPt(1))
+            add_text_box(s2, val, bx+int(PPt(5)), by+int(PPt(5)),
+                         bw-int(PPt(10)), int(PInches(0.55)),
+                         fs=22, bold=True, color=(88,166,255), center=True)
+            add_text_box(s2, lbl, bx+int(PPt(5)), by+int(PInches(0.6)),
+                         bw-int(PPt(10)), int(PInches(0.4)),
+                         fs=11, color=DIM, center=True)
 
-        bio = safe_text(user_data.get("description",""))
-        loc = safe_text(user_data.get("location",""))
-        joined = format_date(safe_text(user_data.get("created","")))
-        info_text = f"السيرة الذاتية: {bio}\nالموقع: {loc} | الانضمام: {joined}"
-        _pptx_textbox(s2, M, int(PInches(3.0)), W-2*M, int(PInches(1.8)),
-                      info_text, font_size=13, color=C_TEXT, align=PP_ALIGN.RIGHT)
+        bio  = safe_text(user_data.get("description",""), "")
+        loc  = safe_text(user_data.get("location",""),    "")
+        jnd  = format_date(safe_text(user_data.get("created","")))
+        info = f"السيرة الذاتية:\n{bio}\n\nالموقع: {loc}  |  الانضمام: {jnd}"
+        add_text_box(s2, info, M, int(PInches(3.0)), W-2*M, int(PInches(2.0)),
+                     fs=12, color=TEXT)
 
-    # ── شريحة 3: التقرير الاستخباراتي ────────────────────────
+    # شريحة 3+: التقرير الاستخباراتي
     if intel_report:
-        chunks = [intel_report[i:i+800] for i in range(0, len(intel_report), 800)]
-        for ci, chunk in enumerate(chunks[:4]):
-            s = _add_pptx_slide(prs)
-            add_slide_title(s, f"🔍 التقرير الاستخباراتي {'(تابع)' if ci>0 else ''}",
-                            f"الجزء {ci+1} من {len(chunks)}" if len(chunks)>1 else "")
-            _pptx_textbox(s, M, int(PInches(1.4)), W-2*M, int(PInches(5.5)),
-                          chunk, font_size=13, color=C_TEXT, align=PP_ALIGN.RIGHT)
+        for ci, chunk in enumerate([intel_report[i:i+700]
+                                    for i in range(0, len(intel_report), 700)][:5]):
+            s = blank_slide()
+            title_bar(s, "🔍 التقرير الاستخباراتي",
+                      f"جزء {ci+1}" if ci > 0 else "")
+            add_text_box(s, chunk, M, int(PInches(1.3)), W-2*M, int(PInches(5.7)),
+                         fs=13, color=TEXT)
 
-    # ── شريحة 4: الملخص التنفيذي ─────────────────────────────
+    # شرائح الملخص التنفيذي
     if exec_summary:
-        chunks = [exec_summary[i:i+800] for i in range(0, len(exec_summary), 800)]
-        for ci, chunk in enumerate(chunks[:3]):
-            s = _add_pptx_slide(prs)
-            add_slide_title(s, f"📊 الملخص التنفيذي {'(تابع)' if ci>0 else ''}")
-            _pptx_textbox(s, M, int(PInches(1.4)), W-2*M, int(PInches(5.5)),
-                          chunk, font_size=13, color=C_TEXT, align=PP_ALIGN.RIGHT)
+        for ci, chunk in enumerate([exec_summary[i:i+700]
+                                    for i in range(0, len(exec_summary), 700)][:4]):
+            s = blank_slide()
+            title_bar(s, "📊 الملخص التنفيذي",
+                      f"جزء {ci+1}" if ci > 0 else "")
+            add_text_box(s, chunk, M, int(PInches(1.3)), W-2*M, int(PInches(5.7)),
+                         fs=13, color=TEXT)
 
-    # ── شريحة 5: الصور ───────────────────────────────────────
-    for i, img_info in enumerate(images_data or []):
-        s = _add_pptx_slide(prs)
-        add_slide_title(s, f"🖼️ الصورة {i+1}: {img_info.get('label','')}")
-        if img_info.get("b64"):
+    # شرائح الصور
+    for i, img in enumerate(images_data or []):
+        s = blank_slide()
+        title_bar(s, f"🖼️ الصورة {i+1}", img.get('label',''))
+        if img.get("b64"):
             try:
-                iw, ih = calc_image_size_pptx(img_info["b64"], W, H)
-                ix = (W - iw) // 2
-                iy = int(PInches(1.3))
-                s.shapes.add_picture(base64_to_bytesio(img_info["b64"]), ix, iy, iw, ih)
+                iw, ih = calc_image_size_pptx(img["b64"], W, H)
+                s.shapes.add_picture(base64_to_bytesio(img["b64"]),
+                                     (W-iw)//2, int(PInches(1.3)), iw, ih)
             except: pass
-        if img_info.get("analysis"):
-            s2_ = _add_pptx_slide(prs)
-            add_slide_title(s2_, f"📝 تحليل الصورة {i+1}")
-            _pptx_textbox(s2_, M, int(PInches(1.4)), W-2*M, int(PInches(5.5)),
-                          img_info["analysis"][:800], font_size=12,
-                          color=C_TEXT, align=PP_ALIGN.RIGHT)
+        if img.get("analysis"):
+            s2_ = blank_slide()
+            title_bar(s2_, f"📝 تحليل الصورة {i+1}")
+            add_text_box(s2_, img["analysis"][:700],
+                         M, int(PInches(1.3)), W-2*M, int(PInches(5.7)),
+                         fs=12, color=TEXT)
 
-    # ── شريحة 6: تحليل النص ──────────────────────────────────
+    # شريحة تحليل النص
     if text_analysis:
-        s = _add_pptx_slide(prs)
-        add_slide_title(s, "📝 تحليل النص")
-        _pptx_textbox(s, M, int(PInches(1.4)), W-2*M, int(PInches(5.5)),
-                      text_analysis[:800], font_size=13,
-                      color=C_TEXT, align=PP_ALIGN.RIGHT)
+        s = blank_slide()
+        title_bar(s, "📝 تحليل النص")
+        add_text_box(s, text_analysis[:700],
+                     M, int(PInches(1.3)), W-2*M, int(PInches(5.7)),
+                     fs=13, color=TEXT)
 
-    # ── شريحة 7: الخاتمة ─────────────────────────────────────
-    s_end = _add_pptx_slide(prs)
-    bg_slide(s_end)
-    _pptx_textbox(s_end, M, int(PInches(2.5)), W-2*M, int(PInches(1.5)),
-                  "🔒 نهاية التقرير الاستخباراتي", font_size=28, bold=True,
-                  color=(255,255,255), align=PP_ALIGN.CENTER)
-    _pptx_textbox(s_end, M, int(PInches(4.0)), W-2*M, int(PInches(0.8)),
-                  f"محلل حسابات X الاستخباراتي | {VERSION}",
-                  font_size=14, color=C_DIM, align=PP_ALIGN.CENTER)
+    # شريحة الخاتمة
+    s_end = blank_slide()
+    add_text_box(s_end, "🔒 نهاية التقرير الاستخباراتي",
+                 M, int(PInches(2.8)), W-2*M, int(PInches(1.2)),
+                 fs=28, bold=True, color=(255,255,255), center=True)
+    add_text_box(s_end, f"محلل حسابات X  |  {VERSION}",
+                 M, int(PInches(4.2)), W-2*M, int(PInches(0.7)),
+                 fs=14, color=DIM, center=True)
 
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
 
 # ─── أزرار التصدير ────────────────────────────────────────────
-def render_export_buttons(user_data, tweets, intel_report, exec_summary, images_data, text_analysis):
-    user_data    = user_data    or {}
-    intel_report = intel_report or ""
-    exec_summary = exec_summary or ""
-    images_data  = images_data  or []
-    text_analysis= text_analysis or ""
-
+def render_export_buttons(user_data, tweets, intel_report,
+                          exec_summary, images_data, text_analysis):
     st.markdown("---")
     st.markdown("### 📤 تصدير التقرير")
     c1, c2, c3 = st.columns(3)
-
-    uname = safe_text(user_data.get("screen_name","report"), "report")
-    ts    = datetime.now().strftime("%Y%m%d_%H%M")
+    uname = safe_text((user_data or {}).get("screen_name","report"), "report")
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
 
     with c1:
         if DOCX_OK:
-            docx_data = export_to_word(user_data, tweets, intel_report,
-                                        exec_summary, images_data, text_analysis)
-            if docx_data:
-                st.download_button("📄 تنزيل Word",  data=docx_data,
+            data = export_to_word(user_data or {}, tweets or [], intel_report or "",
+                                   exec_summary or "", images_data or [],
+                                   text_analysis or "")
+            if data:
+                st.download_button("📄 تنزيل Word", data=data,
                                    file_name=f"Intel_{uname}_{ts}.docx",
                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                    use_container_width=True)
+        else:
+            st.info("python-docx غير مثبت")
     with c2:
         if PPTX_OK:
-            pptx_data = export_to_pptx(user_data, tweets, intel_report,
-                                        exec_summary, images_data, text_analysis)
-            if pptx_data:
-                st.download_button("📊 تنزيل PowerPoint", data=pptx_data,
+            data = export_to_pptx(user_data or {}, tweets or [], intel_report or "",
+                                   exec_summary or "", images_data or [],
+                                   text_analysis or "")
+            if data:
+                st.download_button("📊 تنزيل PowerPoint", data=data,
                                    file_name=f"Intel_{uname}_{ts}.pptx",
                                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                                    use_container_width=True)
+        else:
+            st.info("python-pptx غير مثبت")
     with c3:
-        txt_parts = []
-        if user_data:
-            txt_parts.append("=== بيانات الحساب ===")
-            for k in ("name","screen_name","description","location","followers","following","tweets","likes","created"):
-                v = user_data.get(k,"")
-                if v: txt_parts.append(f"{k}: {v}")
-        if intel_report: txt_parts += ["", "=== التقرير الاستخباراتي ===", intel_report]
-        if exec_summary:  txt_parts += ["", "=== الملخص التنفيذي ===",    exec_summary]
-        if text_analysis: txt_parts += ["", "=== تحليل النص ===",          text_analysis]
-        txt_bytes = "\n".join(txt_parts).encode("utf-8")
-        st.download_button("📝 تنزيل TXT", data=txt_bytes,
+        ud = user_data or {}
+        lines = ["=== بيانات الحساب ==="]
+        for k in ("name","screen_name","description","location"):
+            if ud.get(k): lines.append(f"{k}: {ud[k]}")
+        if intel_report:  lines += ["","=== التقرير الاستخباراتي ===", intel_report]
+        if exec_summary:  lines += ["","=== الملخص التنفيذي ===",      exec_summary]
+        if text_analysis: lines += ["","=== تحليل النص ===",            text_analysis]
+        st.download_button("📝 تنزيل TXT",
+                           data="\n".join(lines).encode("utf-8"),
                            file_name=f"Intel_{uname}_{ts}.txt",
                            mime="text/plain", use_container_width=True)
 
-# ─── عرض بطاقة الحساب ────────────────────────────────────────
+# ─── بطاقة الحساب ─────────────────────────────────────────────
 def render_user_card(user: dict):
     if not user: return
     name   = safe_text(user.get("name",""))
@@ -875,57 +679,54 @@ def render_user_card(user: dict):
     fing   = format_number(user.get("following",0))
     twts   = format_number(user.get("tweets",   0))
     likes  = format_number(user.get("likes",    0))
-    ver    = "✅ موثق" if user.get("blue_verified") else ""
+    ver    = " ✅" if user.get("blue_verified") else ""
     banner = user.get("banner_url","")
     avatar = (user.get("avatar_url","") or "").replace("_normal","_400x400")
 
-    banner_html = f'<img src="{banner}" style="width:100%;height:120px;object-fit:cover;border-radius:10px 10px 0 0;">' if banner else ""
-    avatar_html = f'<img src="{avatar}" style="width:80px;height:80px;border-radius:50%;border:3px solid #1f6feb;margin-top:-40px;">' if avatar else "👤"
-
     st.markdown(f"""
 <div class="intel-card" style="padding:0;overflow:hidden;">
-  {banner_html}
-  <div style="padding:1rem;text-align:right;">
-    {avatar_html}
-    <h2 style="color:#58a6ff;margin:0.5rem 0 0;">{name} {ver}</h2>
+  {'<img src="'+banner+'" style="width:100%;height:130px;object-fit:cover;border-radius:10px 10px 0 0;">' if banner else ''}
+  <div style="padding:1rem;direction:rtl;text-align:right;">
+    {'<img src="'+avatar+'" style="width:80px;height:80px;border-radius:50%;border:3px solid #1f6feb;margin-top:-40px;display:block;margin-right:auto;">' if avatar else ''}
+    <h2 style="color:#58a6ff;margin:0.5rem 0 0;">{name}{ver}</h2>
     <p style="color:#8b949e;margin:0 0 0.5rem;">@{sname}</p>
-    {'<p style="color:#c9d1d9;">'+bio+'</p>' if bio else ""}
-    {'<p style="color:#8b949e;font-size:13px;">📍 '+loc+'</p>' if loc else ""}
-    <p style="color:#8b949e;font-size:13px;">📅 انضم: {joined}</p>
-    <div style="display:flex;gap:1rem;justify-content:flex-end;flex-wrap:wrap;margin-top:0.8rem;">
-      <span style="color:#c9d1d9;"><b style="color:#58a6ff;">{foll}</b> متابع</span>
-      <span style="color:#c9d1d9;"><b style="color:#58a6ff;">{fing}</b> يتابع</span>
-      <span style="color:#c9d1d9;"><b style="color:#58a6ff;">{twts}</b> تغريدة</span>
-      <span style="color:#c9d1d9;"><b style="color:#58a6ff;">{likes}</b> إعجاب</span>
+    {'<p>'+bio+'</p>' if bio else ""}
+    {'<p style="font-size:13px;">📍 '+loc+'</p>' if loc else ""}
+    <p style="font-size:13px;">📅 انضم: {joined}</p>
+    <div style="display:flex;gap:1.5rem;justify-content:flex-end;flex-wrap:wrap;margin-top:1rem;padding-top:0.8rem;border-top:1px solid rgba(255,255,255,0.1);">
+      <span><b style="color:#58a6ff;">{foll}</b> متابع</span>
+      <span><b style="color:#58a6ff;">{fing}</b> يتابع</span>
+      <span><b style="color:#58a6ff;">{twts}</b> تغريدة</span>
+      <span><b style="color:#58a6ff;">{likes}</b> إعجاب</span>
     </div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-# ─── عرض بطاقة التغريدة ──────────────────────────────────────
+# ─── بطاقة التغريدة ───────────────────────────────────────────
 def render_tweet_card(tweet: dict):
     if not tweet: return
-    text  = safe_text(tweet.get("text",""), "")
-    date  = format_date(safe_text(tweet.get("created_at","")))
-    likes = format_number(tweet.get("likes",0))
-    rts   = format_number(tweet.get("retweets",0))
-    views = format_number(tweet.get("views",0))
-    url   = safe_text(tweet.get("url",""), "#")
-    author= tweet.get("author",{}) or {}
-    aname = safe_text(author.get("name",""))
-    sname = safe_text(author.get("screen_name",""))
+    text   = safe_text(tweet.get("text",""), "")
+    date   = format_date(safe_text(tweet.get("created_at","")))
+    likes  = format_number(tweet.get("likes",0))
+    rts    = format_number(tweet.get("retweets",0))
+    views  = format_number(tweet.get("views",0))
+    url    = safe_text(tweet.get("url",""), "#")
+    author = tweet.get("author",{}) or {}
+    aname  = safe_text(author.get("name",""))
+    sname  = safe_text(author.get("screen_name",""))
 
     st.markdown(f"""
 <div class="intel-card">
   <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem;">
-    <span style="color:#8b949e;font-size:13px;">📅 {date}</span>
-    <span style="color:#58a6ff;font-weight:bold;">{aname} (@{sname})</span>
+    <span style="font-size:13px;">📅 {date}</span>
+    <b style="color:#58a6ff;">{aname} (@{sname})</b>
   </div>
-  <p style="color:#c9d1d9;line-height:1.7;font-size:15px;">{text}</p>
+  <p style="line-height:1.8;font-size:15px;">{text}</p>
   <div style="display:flex;gap:1.5rem;justify-content:flex-end;margin-top:0.8rem;">
-    <span style="color:#8b949e;font-size:13px;">❤️ {likes}</span>
-    <span style="color:#8b949e;font-size:13px;">🔁 {rts}</span>
-    <span style="color:#8b949e;font-size:13px;">👁️ {views}</span>
+    <span style="font-size:13px;">❤️ {likes}</span>
+    <span style="font-size:13px;">🔁 {rts}</span>
+    <span style="font-size:13px;">👁️ {views}</span>
     <a href="{url}" target="_blank" style="color:#58a6ff;font-size:13px;">🔗 عرض</a>
   </div>
 </div>
@@ -934,109 +735,369 @@ def render_tweet_card(tweet: dict):
 # ─── الشريط الجانبي ───────────────────────────────────────────
 def render_sidebar():
     with st.sidebar:
-        st.markdown(f"""
-<div style="text-align:center;padding:1rem 0;direction:rtl;">
-  <h2 style="color:#58a6ff;margin:0;">🔍 محلل X</h2>
-  <p style="color:#8b949e;font-size:12px;margin:0;">{VERSION}</p>
-</div>
-""", unsafe_allow_html=True)
-        st.markdown("---")
+        st.markdown(f"## 🔍 محلل X\n`{VERSION}`")
+        st.divider()
 
-        # مفتاح Gemini
-        st.markdown('<p style="color:#8b949e;font-size:13px;text-align:right;">🤖 مفتاح Gemini API</p>', unsafe_allow_html=True)
-        gemini_key = st.text_input("Gemini API Key", type="password", key="gemini_api_key",
-                                    label_visibility="collapsed",
-                                    placeholder="أدخل مفتاح Gemini API")
-        if gemini_key:
+        gemini_key = st.text_input(
+            "🤖 مفتاح Gemini API", type="password",
+            key="gemini_api_key", placeholder="AIza...")
+        if gemini_key and GENAI_OK:
             genai.configure(api_key=gemini_key)
-            st.success("✅ تم تفعيل Gemini")
+            st.success("✅ Gemini مفعّل")
 
-        # مفتاح TwitterAPI.io
-        st.markdown('<p style="color:#8b949e;font-size:13px;text-align:right;">🐦 مفتاح TwitterAPI.io (اختياري)</p>', unsafe_allow_html=True)
-        twitter_key = st.text_input("TwitterAPI Key", type="password", key="twitter_api_key",
-                                     label_visibility="collapsed",
-                                     placeholder="لجلب آخر 500 تغريدة")
+        twitter_key = st.text_input(
+            "🐦 مفتاح TwitterAPI.io (اختياري)", type="password",
+            key="twitter_api_key", placeholder="لجلب آخر 500 تغريدة")
 
-        # اختيار النموذج
-        st.markdown('<p style="color:#8b949e;font-size:13px;text-align:right;">🧠 نموذج الذكاء الاصطناعي</p>', unsafe_allow_html=True)
-        model_name = st.selectbox("النموذج", list(GEMINI_MODELS.keys()), key="model_select",
-                                   label_visibility="collapsed")
+        model_name = st.selectbox(
+            "🧠 النموذج", list(GEMINI_MODELS.keys()), key="model_select")
         st.session_state["model_id"] = GEMINI_MODELS[model_name]
 
-        st.markdown("---")
+        st.divider()
         st.markdown("""
-<div style="direction:rtl;text-align:right;font-size:12px;color:#8b949e;">
-<b style="color:#58a6ff;">📡 مصادر البيانات:</b><br>
-✅ FxTwitter API (نشط)<br>
-✅ TwitterAPI.io (اختياري)<br><br>
-<b style="color:#58a6ff;">📖 طريقة الاستخدام:</b><br>
-1. أدخل مفتاح Gemini<br>
-2. أدخل رابط حساب أو تغريدة<br>
-3. اضغط تحليل<br>
-4. صدّر التقرير
-</div>
-""", unsafe_allow_html=True)
+**📡 مصادر البيانات:**
+- ✅ FxTwitter API
+- ✅ TwitterAPI.io
 
-        return twitter_key
+**📖 الاستخدام:**
+1. أدخل مفتاح Gemini
+2. أدخل رابط حساب أو تغريدة
+3. اضغط تحليل
+4. صدّر التقرير
+""")
+    return twitter_key
 
 # ─── تبويب تحليل الحساب ───────────────────────────────────────
 def account_tab(twitter_api_key: str):
-    st.markdown('<h3 style="color:#58a6ff;text-align:right;">👤 تحليل حساب X</h3>', unsafe_allow_html=True)
+    st.markdown("## 👤 تحليل حساب X")
 
-    col1, col2 = st.columns([3, 1])
+    col1, col2 = st.columns([4, 1])
     with col1:
-        account_input = st.text_input(
+        inp = st.text_input(
             "رابط الحساب أو اسم المستخدم",
-            placeholder="مثال: https://x.com/username أو @username",
-            key="account_input", label_visibility="visible"
-        )
+            placeholder="https://x.com/username  أو  @username",
+            key="account_input")
     with col2:
         st.markdown("<br>", unsafe_allow_html=True)
-        fetch_btn = st.button("🔍 جلب البيانات", key="fetch_account", use_container_width=True)
+        go = st.button("🔍 جلب", key="fetch_account", use_container_width=True)
 
-    if fetch_btn and account_input:
-        user = None
-        tweet = None
-
-        # محاولة استخراج معرف التغريدة
-        tid = extract_tweet_id(account_input)
-        if tid:
-            with st.spinner("جاري جلب التغريدة..."):
+    if go and inp:
+        with st.spinner("جاري الجلب..."):
+            user, tweet = None, None
+            tid = extract_tweet_id(inp)
+            if tid:
                 tweet = fetch_fxtwitter_tweet(tid)
-            if tweet and tweet.get("author"):
-                uname = tweet["author"].get("screen_name","")
-                if uname:
-                    with st.spinner(f"جاري جلب بيانات @{uname}..."):
-                        user = fetch_fxtwitter_user(uname)
-
-        if not user:
-            uname = extract_username(account_input)
-            if uname:
-                with st.spinner(f"جاري جلب بيانات @{uname}..."):
-                    user = fetch_fxtwitter_user(uname)
-
+                if tweet and tweet.get("author"):
+                    un = tweet["author"].get("screen_name","")
+                    if un: user = fetch_fxtwitter_user(un)
+            if not user:
+                un = extract_username(inp)
+                if un: user = fetch_fxtwitter_user(un)
         if user:
             st.session_state["account_user"]  = user
             st.session_state["account_tweet"] = tweet
-            st.success(f"✅ تم جلب بيانات @{user.get('screen_name','')}")
+            st.success(f"✅ تم جلب @{user.get('screen_name','')}")
         else:
-            st.error("❌ تعذّر جلب البيانات. تأكد من صحة الرابط أو اسم المستخدم.")
+            st.error("❌ تعذّر الجلب. تحقق من الرابط أو اسم المستخدم.")
 
     user  = st.session_state.get("account_user")
     tweet = st.session_state.get("account_tweet")
 
-    if user:
-        render_user_card(user)
+    if not user:
+        st.info("📌 أدخل رابط حساب X أو اسم المستخدم للبدء")
+        return
 
-        # ─── جلب التغريدات للتحليل ───────────────────────────
-        st.markdown("---")
-        st.markdown('<h4 style="color:#58a6ff;text-align:right;">🔍 التحليل الاستخباراتي الشامل للمنشورات</h4>', unsafe_allow_html=True)
+    render_user_card(user)
 
-        col_a, col_b = st.columns([1,1])
-        with col_b:
-            if twitter_api_key:
-                if st.button("📥 جلب آخر 500 منشور تلقائياً", key="fetch_tweets", use_container_width=True):
-                    with st.spinner("جاري جلب المنشورات... قد يستغرق هذا دقيقة"):
-                        tweets = fetch_user_tweets_twitterapi(
-                            user.get("screen_name",""), twitter_api_key, 500
-                        )
+    # ─── قسم التحليل الاستخباراتي ──────────────────────────
+    st.markdown("---")
+    st.markdown("## 🔍 التحليل الاستخباراتي الشامل")
+
+    # جلب التغريدات
+    tweets_list = st.session_state.get("fetched_tweets", [])
+
+    col_a, col_b = st.columns(2)
+    with col_b:
+        if twitter_api_key:
+            if st.button("📥 جلب آخر 500 منشور", key="fetch_tweets",
+                         use_container_width=True):
+                with st.spinner("جاري الجلب... قد يستغرق دقيقة"):
+                    tweets_list = fetch_user_tweets_twitterapi(
+                        user.get("screen_name",""), twitter_api_key, 500)
+                    st.session_state["fetched_tweets"] = tweets_list
+                st.success(f"✅ تم جلب {len(tweets_list)} منشور")
+        else:
+            st.warning("أدخل مفتاح TwitterAPI.io للجلب التلقائي")
+
+    with col_a:
+        manual_tweets = st.text_area(
+            "📋 أو الصق نص التغريدات يدوياً",
+            height=150, key="manual_tweets",
+            placeholder="الصق هنا نصوص التغريدات...")
+
+    # تجميع النصوص
+    all_texts = []
+    if tweets_list:
+        all_texts += [t.get("text","") if isinstance(t,dict) else str(t)
+                      for t in tweets_list]
+    if manual_tweets.strip():
+        all_texts += manual_tweets.strip().split('\n')
+
+    if all_texts:
+        st.info(f"📊 إجمالي النصوص المتاحة للتحليل: **{len(all_texts)}**")
+
+        # فحص الكلمات المفتاحية
+        kw_hits = scan_keywords(all_texts)
+        if kw_hits:
+            st.markdown("### ⚠️ الكلمات المفتاحية المكتشفة")
+            for cat, hits in kw_hits.items():
+                st.error(f"**{cat}:** {' | '.join(hits)}")
+        else:
+            st.success("✅ لم تُكتشف كلمات مفتاحية مثيرة للقلق")
+
+        model_id = st.session_state.get("model_id", "gemini-2.5-flash-preview-05-20")
+        gemini_key = st.session_state.get("gemini_api_key","")
+
+        if st.button("🧠 بدء التحليل الاستخباراتي الشامل",
+                     key="run_intel", use_container_width=True):
+            if not gemini_key:
+                st.error("❌ أدخل مفتاح Gemini API أولاً")
+            else:
+                with st.spinner("جاري التحليل الاستخباراتي..."):
+                    report = generate_intel_summary(user, all_texts,
+                                                    kw_hits, model_id)
+                st.session_state["intel_report"] = report
+                st.success("✅ اكتمل التحليل")
+
+    intel_report = st.session_state.get("intel_report","")
+    if intel_report:
+        st.markdown("### 📋 التقرير الاستخباراتي")
+        st.markdown(intel_report)
+
+    # ─── تحليل الصور ──────────────────────────────────────
+    st.markdown("---")
+    st.markdown("## 🖼️ تحليل الصور")
+
+    gemini_key = st.session_state.get("gemini_api_key","")
+    model_id   = st.session_state.get("model_id", "gemini-2.5-flash-preview-05-20")
+
+    # صورة الملف الشخصي
+    avatar_url = (user.get("avatar_url","") or "").replace("_normal","_400x400")
+    if avatar_url:
+        with st.expander("🖼️ تحليل صورة الملف الشخصي"):
+            analysis_type = st.selectbox(
+                "نوع التحليل", list(IMAGE_ANALYSIS_POINTS.keys()),
+                key="avatar_analysis_type")
+            if st.button("🔍 تحليل الصورة", key="analyze_avatar",
+                         use_container_width=True):
+                if not gemini_key:
+                    st.error("❌ أدخل مفتاح Gemini API")
+                else:
+                    with st.spinner("جاري التحليل..."):
+                        b64 = download_image_b64(avatar_url)
+                        if b64:
+                            result = gemini_with_images(
+                                IMAGE_ANALYSIS_POINTS[analysis_type],
+                                [b64], model_id)
+                            if "images_data" not in st.session_state:
+                                st.session_state["images_data"] = []
+                            st.session_state["images_data"].append({
+                                "label": "صورة الملف الشخصي",
+                                "b64": b64,
+                                "analysis": result
+                            })
+                            st.success("✅ اكتمل التحليل")
+                            st.markdown(result)
+                        else:
+                            st.error("تعذّر تنزيل الصورة")
+
+    # رفع صور إضافية
+    with st.expander("📤 رفع صور للتحليل"):
+        uploaded = st.file_uploader(
+            "اختر الصور", type=["jpg","jpeg","png","webp"],
+            accept_multiple_files=True, key="uploaded_images")
+        if uploaded:
+            analysis_type2 = st.selectbox(
+                "نوع التحليل", list(IMAGE_ANALYSIS_POINTS.keys()),
+                key="upload_analysis_type")
+            if st.button("🔍 تحليل الصور المرفوعة",
+                         key="analyze_uploaded", use_container_width=True):
+                if not gemini_key:
+                    st.error("❌ أدخل مفتاح Gemini API")
+                else:
+                    if "images_data" not in st.session_state:
+                        st.session_state["images_data"] = []
+                    for f in uploaded:
+                        with st.spinner(f"تحليل {f.name}..."):
+                            img = Image.open(f)
+                            b64 = image_to_base64(img)
+                            result = gemini_with_images(
+                                IMAGE_ANALYSIS_POINTS[analysis_type2],
+                                [b64], model_id)
+                            st.session_state["images_data"].append({
+                                "label": f.name, "b64": b64, "analysis": result})
+                            st.markdown(f"**{f.name}:**")
+                            st.markdown(result)
+
+    # أزرار التصدير
+    render_export_buttons(
+        user, tweets_list,
+        st.session_state.get("intel_report",""),
+        st.session_state.get("exec_summary",""),
+        st.session_state.get("images_data",[]),
+        st.session_state.get("text_analysis","")
+    )
+
+# ─── تبويب تحليل التغريدة ─────────────────────────────────────
+def tweet_tab():
+    st.markdown("## 🐦 تحليل تغريدة محددة")
+
+    col1, col2 = st.columns([4,1])
+    with col1:
+        tweet_url = st.text_input(
+            "رابط التغريدة",
+            placeholder="https://x.com/user/status/123456789",
+            key="tweet_input")
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        go = st.button("🔍 جلب", key="fetch_tweet", use_container_width=True)
+
+    if go and tweet_url:
+        tid = extract_tweet_id(tweet_url)
+        if not tid:
+            st.error("❌ لم يُعثر على معرّف التغريدة في الرابط")
+            return
+        with st.spinner("جاري جلب التغريدة..."):
+            tweet = fetch_fxtwitter_tweet(tid)
+        if tweet:
+            st.session_state["current_tweet"] = tweet
+            st.success("✅ تم جلب التغريدة")
+        else:
+            st.error("❌ تعذّر جلب التغريدة")
+
+    tweet = st.session_state.get("current_tweet")
+    if not tweet:
+        st.info("📌 أدخل رابط تغريدة للبدء")
+        return
+
+    render_tweet_card(tweet)
+
+    gemini_key = st.session_state.get("gemini_api_key","")
+    model_id   = st.session_state.get("model_id","gemini-2.5-flash-preview-05-20")
+
+    # الصور المضمّنة
+    media = tweet.get("media",{}) or {}
+    imgs  = media.get("photos",[]) or []
+    vids  = media.get("videos",[]) or []
+
+    if imgs or vids:
+        st.markdown("### 🖼️ الوسائط المضمّنة")
+        images_b64 = []
+        for ph in imgs:
+            url = ph.get("url","")
+            if url:
+                b64 = download_image_b64(url)
+                if b64:
+                    images_b64.append(b64)
+                    img_obj = Image.open(base64_to_bytesio(b64))
+                    st.image(img_obj, use_column_width=True)
+        if images_b64:
+            analysis_type = st.selectbox(
+                "نوع التحليل", list(IMAGE_ANALYSIS_POINTS.keys()),
+                key="tweet_img_analysis")
+            if st.button("🔍 تحليل الصور", key="analyze_tweet_imgs",
+                         use_container_width=True):
+                if not gemini_key:
+                    st.error("❌ أدخل مفتاح Gemini API")
+                else:
+                    with st.spinner("جاري التحليل..."):
+                        result = gemini_with_images(
+                            IMAGE_ANALYSIS_POINTS[analysis_type],
+                            images_b64, model_id)
+                        st.session_state["img_analysis_tweet"] = result
+                    st.markdown(result)
+
+    # تحليل النص
+    st.markdown("---")
+    st.markdown("### 📝 تحليل النص")
+    custom_prompt = st.text_area(
+        "سؤال أو توجيه مخصص (اختياري)",
+        key="custom_prompt",
+        placeholder="مثال: هل هذا النص يحتوي على تحريض؟")
+
+    if st.button("🧠 تحليل التغريدة", key="analyze_tweet_text",
+                 use_container_width=True):
+        if not gemini_key:
+            st.error("❌ أدخل مفتاح Gemini API")
+        else:
+            tweet_text = tweet.get("text","")
+            prompt = custom_prompt if custom_prompt.strip() else (
+                f"حلل هذه التغريدة من منظور استخباراتي وأمني:\n\n{tweet_text}")
+            with st.spinner("جاري التحليل..."):
+                result = gemini_text(prompt, model_id)
+                st.session_state["text_analysis"] = result
+            st.markdown(result)
+
+    text_analysis = st.session_state.get("text_analysis","")
+
+    # الملخص التنفيذي
+    if text_analysis:
+        if st.button("📊 توليد الملخص التنفيذي", key="gen_exec",
+                     use_container_width=True):
+            with st.spinner("جاري توليد الملخص..."):
+                p = f"اكتب ملخصاً تنفيذياً موجزاً (فقرة واحدة) لهذا التحليل:\n{text_analysis}"
+                summary = gemini_text(p, model_id)
+                st.session_state["exec_summary"] = summary
+            st.markdown(summary)
+
+    # أزرار التصدير
+    render_export_buttons(
+        st.session_state.get("account_user"),
+        [],
+        st.session_state.get("intel_report",""),
+        st.session_state.get("exec_summary",""),
+        st.session_state.get("images_data",[]),
+        text_analysis
+    )
+
+# ─── الدالة الرئيسية ──────────────────────────────────────────
+def main():
+    # يجب أن تكون أول استدعاء
+    st.set_page_config(
+        page_title=PAGE_TITLE,
+        page_icon=PAGE_ICON,
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+
+    # CSS للـ RTL فقط (الألوان من config.toml)
+    st.markdown(RTL_CSS, unsafe_allow_html=True)
+
+    # تهيئة session state
+    for key in ("account_user","account_tweet","current_tweet",
+                "intel_report","exec_summary","text_analysis",
+                "images_data","fetched_tweets","model_id"):
+        if key not in st.session_state:
+            st.session_state[key] = [] if key in ("images_data","fetched_tweets") else ""
+
+    # الشريط الجانبي
+    twitter_api_key = render_sidebar()
+
+    # العنوان الرئيسي
+    st.markdown(f"""
+<div style="text-align:center;padding:1.5rem 0;direction:rtl;">
+  <h1 style="margin:0;">🔍 {PAGE_TITLE}</h1>
+  <p style="margin:0.3rem 0 0;">{VERSION} | مدعوم بـ FxTwitter + Gemini AI</p>
+</div>
+""", unsafe_allow_html=True)
+    st.divider()
+
+    # التبويبات
+    tab1, tab2 = st.tabs(["👤 تحليل حساب", "🐦 تحليل تغريدة"])
+    with tab1:
+        account_tab(twitter_api_key)
+    with tab2:
+        tweet_tab()
+
+if __name__ == "__main__":
+    main()
